@@ -19,20 +19,37 @@ no shared logins.
 
 ## Install
 
+Paste this into Terminal:
+
 ```bash
-git clone https://github.com/TheRajeev08/fy27-territory-plan.git \
-  ~/.copilot/installed-plugins/fy27-territory-plan
+curl -fsSL https://raw.githubusercontent.com/TheRajeev08/fy27-territory-plan/main/install.sh | bash
 ```
 
-Then install the canvas so results render in-app — ask Copilot:
+It downloads the plugin, installs the one Python dependency, and verifies the result. It is
+safe to re-run — an existing copy is updated, and a damaged one is repaired.
+
+Then **quit the Copilot app completely and reopen it** (closing the window is not enough), and ask:
+
+> Build my FY27 territory plan
+
+Optionally install the canvas so results render in-app — ask Copilot:
 
 > Install the extension from https://github.com/TheRajeev08/fy27-territory-plan/tree/main/fy27-territory-plan/extensions/fy27-territory-plan
 
-Restart the Copilot App. You should see the `fy27-territory-plan` skill available.
+<details>
+<summary>Prefer to install by hand?</summary>
+
+```bash
+git clone https://github.com/TheRajeev08/fy27-territory-plan.git \
+  ~/.copilot/installed-plugins/fy27-territory-plan
+python3 -m pip install --user xlsxwriter
+```
 
 The clone target is the *bundle* directory: the loader looks for plugins at
 `~/.copilot/installed-plugins/<bundle>/<plugin>/plugin.json`, which is why this repo nests the
-plugin one level down rather than putting `plugin.json` at its root.
+plugin one level down rather than putting `plugin.json` at its root. The repeated folder name
+after cloning is expected.
+</details>
 
 ### Requirements
 

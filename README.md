@@ -6,14 +6,15 @@ inside your own Copilot session.
 
 ## Install
 
+Paste this one line into Terminal:
+
 ```bash
-git clone https://github.com/TheRajeev08/fy27-territory-plan.git \
-  ~/.copilot/installed-plugins/fy27-territory-plan
+curl -fsSL https://raw.githubusercontent.com/TheRajeev08/fy27-territory-plan/main/install.sh | bash
 ```
 
-Restart the Copilot App, then ask:
+Then quit and reopen the Copilot app, and ask:
 
-> Build my FY27 territory plan from ~/Downloads/Super Summary.xlsx
+> Build my FY27 territory plan
 
 The plugin itself lives in [`fy27-territory-plan/`](fy27-territory-plan/) — this repo is the
 bundle directory the plugin loader scans. See that folder's README for requirements, the
