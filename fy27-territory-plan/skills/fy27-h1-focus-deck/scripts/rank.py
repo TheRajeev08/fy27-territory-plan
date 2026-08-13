@@ -29,6 +29,10 @@ DEFAULT_FINAL = 40
 MIN_FINAL, MAX_FINAL = 30, 50
 CANDIDATE_MULTIPLIER = 1.5
 
+# A focus account has to belong to a play: the deck organises Q2 and Q4 by play, so an
+# unclassified account has nothing to be presented against no matter how it scores.
+PLAYS = ("Innovate", "Trust", "Scale")
+
 # Weights sum to 1.0. Potential leads because the ask is a revenue plan; communication
 # is weighted next because a warm account is materially likelier to close in a half;
 # triggers are the tiebreaker that says "why now" rather than "how big".
@@ -201,8 +205,9 @@ def main():
         final = opt("--count", int, DEFAULT_FINAL)
         want = opt("--candidates", int, int(round(final * CANDIDATE_MULTIPLIER)))
         rows = score_rows(rows, W_STAGE1)
-        # Only accounts with something to sell can be a focus account.
-        eligible = [r for r in rows if r["potentialArr"] > 0 or r["communicationScore"] > 0]
+        # Only accounts with something to sell, and a play to sell it under, can be focus.
+        eligible = [r for r in rows if r["play"] in PLAYS
+                    and (r["potentialArr"] > 0 or r["communicationScore"] > 0)]
         candidates = eligible[:want]
         out = {
             "stage": 1,
@@ -231,8 +236,9 @@ def main():
         by_key = raw_triggers.get("accounts", raw_triggers)
 
         rows = score_rows(rows, W_STAGE2, by_key)
-        eligible = [r for r in rows if r["potentialArr"] > 0 or r["communicationScore"] > 0
-                    or r.get("triggerScore", 0) > 0]
+        eligible = [r for r in rows if r["play"] in PLAYS
+                    and (r["potentialArr"] > 0 or r["communicationScore"] > 0
+                         or r.get("triggerScore", 0) > 0)]
         focus = eligible[:count]
         for i, row in enumerate(focus, 1):
             row["rank"] = i

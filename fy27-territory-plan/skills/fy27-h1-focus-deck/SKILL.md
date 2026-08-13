@@ -97,13 +97,24 @@ per agent keeps each one reliable). Ask for a single raw JSON object:
    "url": "https://...", "soWhat": "one line on why GitHub matters now"}]}}
 ```
 
-`type` must be one of: `funding`, `acquisition`, `merger`, `ai_launch`, `security_incident`,
-`leadership_change`, `expansion`, `layoff`, `earnings`, `partnership`, `product_launch`,
-`regulatory`.
+`type` must be one of the types `rank.py` can score: `funding`, `acquisition`, `security_incident`,
+`leadership_change`, `ai_launch`, `product_launch`, `expansion`, `partnership`, `earnings`,
+`recognition`, `other`. Anything else is dropped, so do not invent types.
 
 **Drop any trigger without both a real date and a real source URL.** An undated claim is a rumour,
-and a leader will find it. Only the last 18 months count. Merge the agent payloads into
-`<RUN>/triggers.json`, stripping any markdown fences the agents add.
+and a leader will find it. Only the last 18 months count.
+
+Write each agent's raw reply to its own file in `<RUN>/triggers/`, then merge:
+
+```bash
+python3 scripts/merge_triggers.py <RUN>/focus-candidates.json <RUN>/triggers <RUN>/triggers.json
+```
+
+`merge_triggers.py` strips markdown fences, resolves whichever identifier the agent used
+(Salesforce id, account name, or candidate key) back onto the candidate key, enforces the
+type/date/URL bar, and reports `dropped` plus `unmatchedKeys`. A non-zero `unmatchedKeys`
+usually means the agent researched an account that is not in the candidate set — check it
+rather than ignoring it.
 
 ### 5. Enrich partners and Microsoft overlap
 
@@ -181,6 +192,10 @@ Do not invent adoption steps in chat. If a key action is not in `paf.json`, it i
   included credits ship bundled with the seat. Counting either as upside double-counts the book.
   The deck shows AIU as measured run-rate and as capacity unlocked, separately.
 - **Every trigger is dated and cited, or it is dropped.**
+- **A focus account must belong to a play.** `rank.py` excludes unclassified accounts from both
+  stages: the deck organises Q2 and Q4 by play, so an account with no play has nothing to be
+  presented against no matter how large its potential is. It stays in the territory plan; it just
+  cannot be a focus account until a product or usage signal classifies it.
 - **State coverage, never imply completeness.** Where activity, partner mapping, or Microsoft AM
   data is thin, the deck says so on the slide. That is deliberate — it is what makes the asks
   credible.
