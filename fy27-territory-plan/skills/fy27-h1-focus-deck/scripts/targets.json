@@ -1,5 +1,5 @@
 {
-  "_comment": "TEMPLATE - fill in your own quota before running targets.py. Every target is null so the deck renders TBD rather than a number you did not set. Set a target to null at any time to suppress its coverage percentage instead of inventing a denominator.",
+  "_comment": "Targets ship blank. Fill in your own quota per bucket and quarter, then re-run targets.py and exec_deck.py. A null target renders TBD on the deck rather than inventing a denominator.",
   "fiscalYear": "FY27",
   "half": "H1",
   "basis": "net-new",
