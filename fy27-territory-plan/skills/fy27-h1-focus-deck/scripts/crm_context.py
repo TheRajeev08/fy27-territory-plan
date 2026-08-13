@@ -35,6 +35,8 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from actuals import num, pick, rows_of  # noqa: E402  (shared envelope handling)
+import overrides  # noqa: E402
+from potential import Rates  # noqa: E402
 
 CHUNK = 200
 
@@ -61,6 +63,55 @@ FROM Opportunity WHERE IsClosed = false AND AccountId IN (%s)
 ORDER BY Amount DESC NULLS LAST"""
 
 RENEWAL_TYPES = {"renewal"}
+
+# Opportunity name -> product. Salesforce carries no product field on the Opportunity
+# here, so the name is the only signal, and it is a good one: the naming convention is
+# consistent enough to classify on. Order matters - GHAS before GHE, because "GitHub
+# Advanced Security" contains neither "GHE" nor "Enterprise" but a combined name might.
+PRODUCT_PATTERNS = (
+    ("GHAS", r"\bghas\b|advanced\s+security|code\s+security|secret\s+protection"),
+    ("Copilot", r"copilot|\bghcp\b"),
+    ("Actions", r"\bactions?\b"),
+    ("Codespaces", r"codespace"),
+    ("Code Quality", r"code\s+quality"),
+    ("GHE", r"\bghe\b|\bghec\b|github\s+enterprise|enterprise\s+(cloud|server)"),
+)
+
+# Opportunity Type -> product, used only when the name says nothing. "Metered" is
+# consumption by definition, so it is safe to place in Bucket 2. Services carries no
+# product ARR at all and must never land in either bucket.
+TYPE_PRODUCT = {
+    "metered": "Consumption",
+    "services": "Services",
+}
+
+# This book's opportunity names follow "<Account> <N> Seat <FY_Q> <Type>". Seat-based
+# business here is GitHub Enterprise: of the 34 seat-priced opportunities, 32 land at
+# or below GHE list ($252/seat/yr), and the accounts carrying them hold no other
+# product contract. Inferring GHE is therefore evidence-based rather than a guess --
+# but it is a weaker signal than an explicit product name, so it is recorded with its
+# own basis label and footnoted wherever the number appears.
+SEAT_NAMING = re.compile(r"\b\d+\s+seats?\b", re.I)
+
+
+def classify_product(name, otype):
+    """(product, basis) for an opportunity. Never guesses into a quota-bearing bucket.
+
+    An opportunity that cannot be classified returns "Unclassified" rather than
+    defaulting to a product. Defaulting is how a deal quietly becomes coverage for a
+    target it has nothing to do with.
+    """
+    text = str(name or "")
+    for product, pattern in PRODUCT_PATTERNS:
+        if re.search(pattern, text, re.I):
+            return product, "name"
+    mapped = TYPE_PRODUCT.get(str(otype or "").strip().lower())
+    if mapped:
+        return mapped, "type"
+    if SEAT_NAMING.search(text):
+        return "GHE", "inferred-seat-naming"
+    return "Unclassified", "none"
+
 
 # Stages late enough that the deal is a credible half-commit rather than an aspiration.
 # Used only to rank, never to inflate value.
@@ -112,7 +163,66 @@ def stage_weight(stage):
     return ADVANCED_STAGES.get(str(stage or "").strip().lower(), 0.3)
 
 
-def ingest(raw, as_of):
+def apply_overrides(accounts, ov, rates, h1_start, h1_end):
+    """Fold seller-known facts into the CRM picture.
+
+    Runs after the Salesforce rows are in place so an override always wins over the
+    system of record - that is the point of it. Every change is recorded on the
+    account so the workbook can show what was corrected and why.
+    """
+    if not ov:
+        return {"pipelineAccounts": 0, "pipelineValue": 0.0, "overlapCleared": 0,
+                "unpriced": []}
+
+    by_name = {norm_name(rec.get("name")): sid for sid, rec in accounts.items()}
+    summary = {"pipelineAccounts": 0, "pipelineValue": 0.0, "overlapCleared": 0,
+               "unpriced": []}
+
+    for key in list(ov.accounts):
+        record = ov.accounts[key]
+        sid = key if key in accounts else by_name.get(norm_name(key))
+        if not sid:
+            continue
+        ov.for_account(sid, accounts[sid].get("name", ""))
+        rec = accounts[sid]
+        reason = record.get("reason") or ""
+
+        if record.get("msftOverlap") is False and rec.get("msftOverlap"):
+            rec["msftOverlap"] = False
+            rec["suppressedTpids"] = rec.get("tpids", [])
+            rec["tpids"] = []
+            rec.setdefault("overrides", []).append(
+                {"field": "msftOverlap", "value": False, "reason": reason})
+            summary["overlapCleared"] += 1
+
+        entries, unpriced = overrides.pipeline_entries(record, rates, h1_start, h1_end)
+        summary["unpriced"].extend(
+            {"account": rec.get("name", ""), "line": line} for line in unpriced)
+        if not entries:
+            continue
+        rec["openPipeline"].extend(entries)
+        added = sum(e["amount"] for e in entries)
+        rec["h1PipelineValue"] += added
+        rec["sellerPipelineValue"] = rec.get("sellerPipelineValue", 0.0) + added
+        for entry in entries:
+            weight = stage_weight(entry["stage"])
+            if weight > rec["bestStageWeight"]:
+                rec["bestStageWeight"] = weight
+                rec["bestStage"] = entry["stage"]
+        rec.setdefault("overrides", []).append(
+            {"field": "pipeline", "value": round(added, 2), "reason": reason})
+        summary["pipelineAccounts"] += 1
+        summary["pipelineValue"] += added
+
+    summary["pipelineValue"] = round(summary["pipelineValue"], 2)
+    return summary
+
+
+def norm_name(value):
+    return overrides.norm(value)
+
+
+def ingest(raw, as_of, ov=None, rates=None):
     _, h1_start, h1_end, _ = fiscal_h1(as_of)
     accounts = {}
 
@@ -156,6 +266,7 @@ def ingest(raw, as_of):
         stale = bool(close) and close < as_of.isoformat()
         in_h1 = bool(close) and h1_start.isoformat() <= close <= h1_end.isoformat()
         is_renewal = otype.lower() in RENEWAL_TYPES
+        product, product_basis = classify_product(pick(row, "Name", "name"), otype)
 
         rec["openPipeline"].append({
             "name": pick(row, "Name", "name") or "",
@@ -167,6 +278,9 @@ def ingest(raw, as_of):
             "stale": stale,
             "inH1": in_h1,
             "isRenewal": is_renewal,
+            "product": product,
+            "productBasis": product_basis,
+            "source": "crm",
         })
         if stale:
             rec["stalePipelineValue"] += amount
@@ -185,17 +299,22 @@ def ingest(raw, as_of):
     for rec in accounts.values():
         rec["openPipeline"].sort(key=lambda o: -o["amount"])
 
+    applied = apply_overrides(accounts, ov, rates, h1_start, h1_end)
+
     with_tpid = sum(1 for r in accounts.values() if r["msftOverlap"])
     with_pipe = sum(1 for r in accounts.values() if r["h1PipelineValue"] > 0)
     return {
         "accounts": accounts,
         "window": {"h1Start": h1_start.isoformat(), "h1End": h1_end.isoformat(),
                    "asOf": as_of.isoformat()},
+        "overrides": applied,
         "coverage": {
             "accounts": len(accounts),
             "accountsWithTpid": with_tpid,
             "accountsWithH1Pipeline": with_pipe,
             "h1PipelineValue": round(sum(r["h1PipelineValue"] for r in accounts.values()), 2),
+            "sellerPipelineValue": round(
+                sum(r.get("sellerPipelineValue", 0.0) for r in accounts.values()), 2),
             "h1RenewalValue": round(sum(r["h1RenewalValue"] for r in accounts.values()), 2),
             "stalePipelineValue": round(sum(r["stalePipelineValue"] for r in accounts.values()), 2),
             "staleOpportunities": stale_count,
@@ -229,12 +348,35 @@ def main():
         as_of = date.today()
         if "--as-of" in sys.argv:
             as_of = date.fromisoformat(sys.argv[sys.argv.index("--as-of") + 1])
-        result = ingest(raw, as_of)
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        ov_path = (sys.argv[sys.argv.index("--overrides") + 1]
+                   if "--overrides" in sys.argv
+                   else os.path.join(run_dir, "overrides.json"))
+        pricing_path = (sys.argv[sys.argv.index("--pricing") + 1]
+                        if "--pricing" in sys.argv
+                        else os.path.join(os.path.dirname(here), "pricing.json"))
+        ov_data = overrides.load(ov_path)
+        ov = overrides.Overrides(ov_data) if ov_data else None
+        rates = Rates(json.load(open(pricing_path, encoding="utf-8")))
+
+        result = ingest(raw, as_of, ov=ov, rates=rates)
+        if ov:
+            ov.check("overrides file: %s" % ov_path)
+        unpriced = result.get("overrides", {}).get("unpriced") or []
+        if unpriced:
+            raise SystemExit(
+                "overrides.json: could not price %d pipeline line(s) - give each a "
+                "seats/committers count for a known product, or an explicit amount: %s"
+                % (len(unpriced), json.dumps(unpriced)))
+
         out = os.path.join(run_dir, "crm-context.json")
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=1)
         summary = {"crmContextPath": out}
         summary.update(result["coverage"])
+        summary["overridesApplied"] = {
+            k: v for k, v in result["overrides"].items() if k != "unpriced"}
         print(json.dumps(summary))
         return
 

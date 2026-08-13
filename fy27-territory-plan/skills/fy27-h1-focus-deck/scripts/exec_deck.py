@@ -93,9 +93,14 @@ def slide_1_scorecard(deck, coverage, focus):
                                                        bucket.get("attainmentPct") or 0)
         else:
             right = "H1 target: TBD"
-            sub = "target not yet set \u2014 attainment shown as absolute"
+            sub = "target not yet set \u2014 attainment absolute"
         deck.text(slide, Emu(int(x + Inches(2.85))), Inches(2.72), Emu(int(w - Inches(3.15))),
                   Inches(0.3), right, size=12.5, color=MUTED)
+        # Pipeline belongs inside its own bucket panel. Shown as one blended figure it
+        # reads as cover for whichever gap it happens to sit next to.
+        live = bucket.get("livePipeline") or 0
+        if live:
+            sub = "%s \u00b7 %s live pipeline" % (sub, money(live))
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.18), Emu(int(w - Inches(0.6))),
                   Inches(0.28), sub, size=11, color=MUTED)
 
@@ -112,11 +117,12 @@ def slide_1_scorecard(deck, coverage, focus):
     bucket_card(Inches(6.95), b2, PLAY_COLOR["Innovate"])
 
     ftotals = focus.get("totals", {})
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
     cards = [
         ("Focus accounts", num(focus.get("selectedCount")), "of %s in book" % num(focus.get("bookSize"))),
         ("Potential ARR H1", money(ftotals.get("potentialArr")), "sized, new business"),
         ("Current ARR", money(ftotals.get("currentArr")), "installed base in focus set"),
-        ("Live H1 pipeline", money(ftotals.get("h1Pipeline")), "net-new, close-dated in H1"),
+        ("Bucket 1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in H1"),
     ]
     x = MARGIN
     for label, value, sub in cards:
@@ -311,7 +317,7 @@ def slide_5_the_number(deck, potential, focus, coverage):
                [1.6, 1.3, 6.2, 1.6, 1.8], rows, row_h=0.46, size=11.5, colors=colors)
 
     total = sum(values.values())
-    deck.text(slide, MARGIN, Inches(5.66), W - 2 * MARGIN, Inches(0.34),
+    deck.text(slide, MARGIN, Inches(5.66), W - 2 * MARGIN, Inches(0.62),
               "Total sized potential across the focus set: %s. This is addressable, not "
               "committed \u2014 the next slide shows how much of it the targets actually need."
               % money(total), size=12.5, color=TEXT)
@@ -322,75 +328,98 @@ def slide_5_the_number(deck, potential, focus, coverage):
 
 def slide_6_coverage(deck, coverage, focus):
     products = {p.get("product"): p for p in coverage.get("products", []) or []}
-    ghe_ratio = (products.get("GHE") or {}).get("coverageRatio")
-    ghas_ratio = (products.get("GHAS") or {}).get("coverageRatio")
-    ghas_consuming = sum(
-        1 for a in focus.get("accounts", [])
-        if float(((a.get("current") or {}).get("consumptionObserved") or {}).get("ghas") or 0) > 1
-    )
+    pipeline = coverage.get("pipeline", {})
+    buckets = {b.get("bucket"): b for b in coverage.get("buckets", []) or []}
+    ghe = products.get("GHE") or {}
+    ghas = products.get("GHAS") or {}
+    ghe_pipe = ghe.get("pipelineCoverage")
+    ghas_pipe = ghas.get("pipelineCoverage")
+    b1 = buckets.get("Bucket 1") or {}
+    uncovered = b1.get("uncoveredGap")
 
-    if ghe_ratio is None or ghas_ratio is None:
+    # The story is now told on dated pipeline, not on TAM. TAM coverage stays in the
+    # table as context, but a ratio built from an aspiration must never be the
+    # sentence leadership reads.
+    if ghe_pipe is None or ghas_pipe is None:
         narrative = ("Targets are not yet set for every product, so coverage reads TBD. Sized TAM "
                      "is what the focus set can address, not what is committed - fill in "
                      "targets.json and re-run to see the coverage gap per product.")
         note = ("Three separate columns on purpose. Sized TAM is not commit. Targets are not yet "
                 "set for every product, so coverage reads TBD until targets.json is filled in.")
     else:
-        narrative = ("GHE is the real constraint: %.2fx coverage means the installed book does not "
-                     "contain enough GHE to reach the H1 number on conversion alone - it needs "
-                     "migration supply and new logos. GHAS is the inverse: %.0fx TAM but only %d "
-                     "consuming account%s, so the constraint is motion, not opportunity."
-                     % (ghe_ratio, ghas_ratio, ghas_consuming,
-                        "" if ghas_consuming == 1 else "s"))
-        note = ("Three separate columns on purpose. Sized TAM is not commit. GHE is at %.2fx on "
-                "net-new and needs migration supply. GHAS is %.0fx covered by TAM but consumed by "
-                "only %d account%s, so the constraint is motion, not opportunity."
-                % (ghe_ratio, ghas_ratio, ghas_consuming, "" if ghas_consuming == 1 else "s"))
+        narrative = ("GHAS is covered %.2fx by dated pipeline, so the H1 GHAS number is a "
+                     "close-and-land problem, not a hunting problem. GHE is at %.2fx and is the "
+                     "whole constraint: %s of Bucket 1 is still uncovered, and it has to come "
+                     "from migration supply and new logos."
+                     % (ghas_pipe, ghe_pipe,
+                        money(uncovered) if uncovered is not None else "the balance"))
+        note = ("Read the live-pipeline column, not TAM. GHAS at %.2fx is already covered by "
+                "dated deals, so protect it and close it. GHE at %.2fx is where the half is won "
+                "or lost - %s uncovered in Bucket 1. If asked what changes the number, the answer "
+                "is GHE migration supply, not more GHAS activity."
+                % (ghas_pipe, ghe_pipe,
+                   money(uncovered) if uncovered is not None else "the balance"))
 
     slide = deck.slide("Coverage: target vs live pipeline vs sized TAM",
                        "Q3 \u00b7 Coverage math", note=note)
     rows, colors = [], {}
-    pipeline = coverage.get("pipeline", {})
 
     for index, product in enumerate(coverage.get("products", []) or []):
         known = product.get("targetKnown")
-        ratio = product.get("coverageRatio")
+        tam_ratio = product.get("coverageRatio")
+        pipe_ratio = product.get("pipelineCoverage")
         rows.append([
             product.get("product", ""),
             product.get("bucket", ""),
-            money(product.get("q1Target")) if known else "TBD",
-            money(product.get("q2Target")) if known else "TBD",
             money(product.get("h1Target")) if known else "TBD",
+            money(product.get("livePipeline")),
+            ("%.2fx" % pipe_ratio) if pipe_ratio is not None else "\u2014",
             money(product.get("sizedPotential")),
-            ("%.2fx" % ratio) if ratio is not None else "\u2014",
+            ("%.2fx" % tam_ratio) if tam_ratio is not None else "\u2014",
         ])
-        colors[index] = ratio_color(ratio)
+        # Colour on dated pipeline: that is the number that carries risk.
+        colors[index] = ratio_color(pipe_ratio)
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
-               ["Product", "Bucket", "Q1 target", "Q2 target", "H1 target",
-                "Sized TAM in focus set", "Coverage"],
-               [1.6, 1.6, 1.5, 1.5, 1.5, 3.4, 1.4], rows, row_h=0.46, size=11.5,
+               ["Product", "Bucket", "H1 target", "Live H1 pipeline", "Pipeline cover",
+                "Sized TAM in focus set", "TAM cover"],
+               [1.5, 1.5, 1.5, 1.9, 1.5, 2.8, 1.3], rows, row_h=0.46, size=11.5,
                colors=colors)
 
     top = float(BODY_TOP) + Inches(0.3) + Inches(0.46) * len(rows) + Inches(0.32)
 
+    by_bucket = pipeline.get("byBucket", {}) or {}
+    seller = pipeline.get("seller") or 0
     cards = [
-        ("Live H1 net-new", money(pipeline.get("netNew")),
-         "%d accounts, close-dated in H1" % (pipeline.get("accounts") or 0), ACCENT),
+        ("Bucket 1 net-new", money(by_bucket.get("Bucket 1")),
+         "GHE + GHAS, close-dated in H1", ACCENT),
+        ("Bucket 2 net-new", money(by_bucket.get("Bucket 2")),
+         "consumption, does not cover Bucket 1", ACCENT),
+        ("Bucket 1 uncovered", money(uncovered) if uncovered is not None else "TBD",
+         "after attainment and pipeline", WARN),
         ("H1 renewal pipeline", money(pipeline.get("renewal")),
-         "excluded from target attainment", MUTED),
-        ("Stale pipeline", money(pipeline.get("stale")),
-         "%d records past close date" % (pipeline.get("staleCount") or 0), WARN),
+         "excluded from attainment", MUTED),
     ]
     x = MARGIN
     for label, value, sub, color in cards:
-        deck.card(slide, x, Emu(int(top)), Inches(3.98), Inches(1.3), label, value, sub, color)
-        x += Inches(4.14)
+        deck.card(slide, x, Emu(int(top)), Inches(2.94), Inches(1.3), label, value, sub, color)
+        x += Inches(3.105)
 
     deck.text(slide, MARGIN, Emu(int(top + Inches(1.52))), W - 2 * MARGIN, Inches(0.68),
               narrative, size=12, color=TEXT)
-    deck.footnote(slide, "Targets are net-new. Renewal pipeline is shown for context only and "
-                         "does not count towards attainment.")
+
+    # Provenance. Leadership will look these numbers up in Salesforce; anything that
+    # will not be found there has to be declared on the slide, not in a backup pack.
+    marks = ["Targets are net-new. Renewal pipeline is shown for context only and does not "
+             "count towards attainment."]
+    if seller:
+        marks.append("Includes %s of seller-confirmed pipeline not yet raised in Salesforce "
+                     "(Indus Valley Partners GHE + GHAS, FY27 Q1)." % money(seller))
+    inferred = pipeline.get("inferredProduct") or 0
+    if inferred:
+        marks.append("%s of pipeline has its product inferred from seat-based opportunity "
+                     "naming rather than an explicit product field." % money(inferred))
+    deck.footnote(slide, " ".join(marks))
     return slide
 
 
@@ -485,7 +514,7 @@ def slide_8_msft_partners(deck, focus, partners):
         ("Accounts with a named partner", num(len(with_partner)),
          "existing partner relationship", PLAY_COLOR["Scale"]),
         ("Partner-led delivery need", num(len([a for a in overlap if a.get("play") == "Scale"])),
-         "Scale accounts needing migration services", PLAY_COLOR["Trust"]),
+         "Scale accounts needing migration", PLAY_COLOR["Trust"]),
     ]
     x = MARGIN
     for label, value, sub, color in cards:
@@ -554,12 +583,16 @@ def slide_10_asks(deck, coverage, focus, learnings):
 
     leadership = []
     if ghe.get("targetKnown"):
+        b1 = next((b for b in coverage.get("buckets", []) or []
+                   if b.get("bucket") == "Bucket 1"), {})
         leadership.append(
-            "GHE supply: sized GHE potential is %s against a %s H1 target (%.2fx). I need "
-            "migration-led demand generation or account additions to close the supply gap, not "
-            "just conversion pressure." % (money(ghe.get("sizedPotential")),
-                                           money(ghe.get("h1Target")),
-                                           ghe.get("coverageRatio") or 0))
+            "GHE supply: %s is close-dated against a %s H1 target (%.2fx), leaving %s of "
+            "Bucket 1 uncovered. I need migration-led demand generation or account additions "
+            "to close the supply gap, not just conversion pressure."
+            % (money(ghe.get("livePipeline")), money(ghe.get("h1Target")),
+               ghe.get("pipelineCoverage") or 0,
+               money(b1.get("uncoveredGap")) if b1.get("uncoveredGap") is not None
+               else "the balance"))
     else:
         leadership.append(
             "GHE target: not yet set. Sized GHE potential in the focus set is %s - I need the "
@@ -573,11 +606,19 @@ def slide_10_asks(deck, coverage, focus, learnings):
             "against \u2014 sized consumption potential in the focus set is %s."
             % money(consumption.get("sizedPotential")))
 
-    leadership.append(
-        "GHAS technical capacity: %d of %d focus accounts consume GHAS today against %s of "
-        "committer-based TAM. Converting that needs security-specialist time, not more "
-        "pipeline." % (facts.get("consumingAccounts", {}).get("ghas", 0),
-                       facts.get("focusCount", 0), money(ghas.get("sizedPotential"))))
+    ghas_pipe = ghas.get("pipelineCoverage")
+    if ghas_pipe is not None and ghas_pipe >= 1:
+        leadership.append(
+            "GHAS delivery capacity: GHAS is already %.2fx covered by dated pipeline (%s). "
+            "The risk is no longer sourcing it, it is landing it \u2014 I need "
+            "security-specialist time to get these to production, not more pipeline."
+            % (ghas_pipe, money(ghas.get("livePipeline"))))
+    else:
+        leadership.append(
+            "GHAS technical capacity: %d of %d focus accounts consume GHAS today against %s of "
+            "committer-based TAM. Converting that needs security-specialist time, not more "
+            "pipeline." % (facts.get("consumingAccounts", {}).get("ghas", 0),
+                           facts.get("focusCount", 0), money(ghas.get("sizedPotential"))))
 
     xfn = [
         "Partnerships: %d focus accounts carry a Microsoft TPID but only %d have a named "

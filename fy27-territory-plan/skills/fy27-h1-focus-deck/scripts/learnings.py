@@ -25,7 +25,10 @@ def load(path, default=None):
 
 
 def money(value):
-    return "${:,.0f}".format(round(float(value or 0)))
+    """Same compact format the deck uses, so no two slides render money differently."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from deck import money as deck_money
+    return deck_money(value)
 
 
 def build(focus, coverage, crm):
@@ -35,6 +38,7 @@ def build(focus, coverage, crm):
 
     no_two_way = [a for a in accounts if not a.get("twoWay")]
     with_pipeline = [a for a in accounts if float(a.get("h1PipelineValue") or 0) > 0]
+    by_bucket = (coverage.get("pipeline", {}) or {}).get("byBucket", {}) or {}
     with_overlap = [a for a in accounts if a.get("msftOverlap")]
     greenfield = [a for a in accounts if (a.get("current") or {}).get("greenfield")]
     with_triggers = [a for a in accounts if a.get("triggers")]
@@ -73,11 +77,13 @@ def build(focus, coverage, crm):
         {
             "headline": "GHAS is a story we told, not a motion we ran",
             "detail": "Only {ghas} of {total} focus accounts consume GHAS today, against "
-                      "{tam} of sized committer-based potential. Coverage of {ratio}x is "
-                      "TAM, not plan.".format(
+                      "{tam} of sized committer-based potential. The H2 gap was motion, not "
+                      "opportunity - and it is now closing: {pipe} of GHAS is close-dated in "
+                      "H1, {ratio}x the H1 GHAS target.".format(
                           ghas=ghas_accounts, total=total,
                           tam=money(ghas.get("sizedPotential")),
-                          ratio=ghas.get("coverageRatio") or 0),
+                          pipe=money(ghas.get("livePipeline")),
+                          ratio=ghas.get("pipelineCoverage") or 0),
             "carryForward": "Run GHAS as a named-account motion on the {n} accounts with "
                             "the largest committer bases, not as an attach conversation.".format(
                                 n=min(8, total)),
@@ -85,12 +91,14 @@ def build(focus, coverage, crm):
         },
         {
             "headline": "GHE net-new needs supply, not just conversion",
-            "detail": "Sized GHE potential in the focus set is {sized} against a {target} "
-                      "H1 target - {ratio}x coverage. The existing book does not contain "
-                      "enough GHE to make the number on conversion alone.".format(
+            "detail": "GHE has {pipe} close-dated against a {target} H1 target - {ratio}x on "
+                      "live pipeline. Sized potential of {sized} is TAM, not plan; the existing "
+                      "book does not contain enough GHE to make the number on conversion "
+                      "alone.".format(
+                          pipe=money(ghe.get("livePipeline")),
                           sized=money(ghe.get("sizedPotential")),
                           target=money(ghe.get("h1Target")),
-                          ratio=ghe.get("coverageRatio") or 0),
+                          ratio=ghe.get("pipelineCoverage") or 0),
             "carryForward": "Add migration and new-logo supply early in Q1 rather than "
                             "discovering the gap at Q2 close.",
             "evidence": "coverage.json GHE line",
@@ -137,12 +145,26 @@ def build(focus, coverage, crm):
         },
     ]
 
+    # Accounts holding dated H1 pipeline that never reached the focus set. These are the
+    # ones that embarrass you in a review: real money, invisible in the plan. They drop
+    # out when SuperDash carries no product signal to classify a play against.
+    focus_ids = {a.get("salesforceId") for a in accounts if a.get("salesforceId")}
+    orphan_pipeline = [
+        (rec.get("name") or sid, float(rec.get("h1PipelineValue") or 0))
+        for sid, rec in ((crm or {}).get("accounts", {}) or {}).items()
+        if float(rec.get("h1PipelineValue") or 0) > 0 and sid not in focus_ids
+    ]
+    orphan_value = sum(v for _, v in orphan_pipeline)
+
     not_working = [
         {
-            "point": "Live pipeline is thin",
-            "proof": "only {n} of {total} focus accounts carry H1-dated net-new pipeline "
-                     "({v})".format(n=len(with_pipeline), total=total,
-                                    v=money(totals.get("h1Pipeline"))),
+            "point": "Live pipeline is thin, and concentrated in the wrong bucket",
+            "proof": "only {n} of {total} focus accounts carry H1-dated net-new pipeline; "
+                     "{b1} of it is Bucket 1 and {b2} is Bucket 2 consumption, which does "
+                     "not cover a Bucket 1 target".format(
+                         n=len(with_pipeline), total=total,
+                         b1=money(by_bucket.get("Bucket 1")),
+                         b2=money(by_bucket.get("Bucket 2"))),
         },
         {
             "point": "Stale opportunities",
@@ -165,6 +187,20 @@ def build(focus, coverage, crm):
                 n=len(greenfield)),
         },
     ]
+
+    if orphan_pipeline:
+        not_working.insert(1, {
+            "point": "Pipeline outside the focus set",
+            "proof": "{n} account{s} holding {v} of dated H1 pipeline {verb} outside the focus "
+                     "set because SuperDash carries no product signal to classify a play "
+                     "({names})".format(
+                         n=len(orphan_pipeline),
+                         s="" if len(orphan_pipeline) == 1 else "s",
+                         verb="sits" if len(orphan_pipeline) == 1 else "sit",
+                         v=money(orphan_value),
+                         names=", ".join(n for n, _ in sorted(
+                             orphan_pipeline, key=lambda x: -x[1])[:3])),
+        })
 
     return {
         "learnings": learnings,

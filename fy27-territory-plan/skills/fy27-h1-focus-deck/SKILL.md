@@ -167,7 +167,8 @@ forecastable whatever its stage says.
 
 ```bash
 python3 SCRIPTS/rank.py stage2 "<RUN>/fy27-territory-plan.json" "<RUN>/potential.json" "<RUN>" \
-  --triggers "<RUN>/triggers.json" --crm "<RUN>/crm-context.json" --count 40
+  --triggers "<RUN>/triggers.json" --crm "<RUN>/crm-context.json" --count 40 \
+  --overrides "<RUN>/overrides.json"
 ```
 
 Re-ranks on the full composite — **potential ARR 40, live H1 pipeline 20, active communication
@@ -176,7 +177,57 @@ Re-ranks on the full composite — **potential ARR 40, live H1 pipeline 20, acti
 is discounted by how far the best live opportunity has advanced, so a large deal parked early
 cannot outrank a smaller one near close.
 
-### 8. Derive the learnings
+### 8. Seller corrections — `overrides.json`
+
+Salesforce is never fully current. The seller knows things the CRM has not been told: a deal
+agreed but not yet raised, a conversation that happened off-system, a partner flag that is
+wrong. `overrides.json` in the run directory carries those facts into the arithmetic so they
+survive a re-run.
+
+**The rule that makes this safe: overrides supply missing facts, never forced rankings.**
+The deck states its accounts are ranked on potential, pipeline, communication and triggers.
+Pinning an account to a rank would make that sentence false. Correct the underlying fact and
+let the existing weights move the account — or report that they did not.
+
+```jsonc
+{
+  "accounts": {
+    "001XXXXXXXXXXXXXXX": {              // Salesforce ID, with name fallback
+      "name": "Indus Valley Partners",
+      "pipeline": [                       // sized through pricing.json, never typed as dollars
+        {"product": "GHE",  "seats": 335,      "quarter": "FY27 Q1", "reason": "agreed, not yet raised"},
+        {"product": "GHAS", "committers": 285, "quarter": "FY27 Q1", "reason": "agreed, not yet raised"}
+      ],
+      "engagement": {"twoWay": true, "meetings": 1, "reason": "live GHAS discussion"},
+      "msftOverlap": false                // e.g. GitHub-direct account wrongly carrying TPIDs
+    }
+  }
+}
+```
+
+Then apply and re-run the downstream steps:
+
+```bash
+python3 SCRIPTS/overrides.py check "<RUN>/overrides.json" "<RUN>/focus-accounts.json"
+```
+
+Four guarantees, each deliberate:
+
+* **Unmatched keys are fatal.** A typo'd Salesforce ID silently doing nothing is worse than a
+  crash, because the correction looks applied and is not.
+* **Manual pipeline is sized, not typed.** Seats and committers go through `pricing.json` at
+  the same rates as every other line, so a seller-sourced number cannot drift off list.
+* **Engagement overrides ride the real curve.** `apply_engagement()` imports `score_for()` from
+  the `fy27-territory-plan` skill rather than reimplementing it, so an overridden account sits
+  on the identical scoring curve as an un-overridden one.
+* **Seller-sourced pipeline is visually distinct on the deck.** Leadership will look for these
+  numbers in Salesforce. If they cannot find them and the deck did not say so, the deck loses
+  credibility. Slide 6 footnotes the amount and the account.
+
+Record any genuine assumption under an `assumption` key alongside `reason`, so the deck can be
+defended line by line and the assumption can be reverted to see what moves.
+
+### 9. Derive the learnings
 
 ```bash
 python3 SCRIPTS/learnings.py "<RUN>"
@@ -185,7 +236,7 @@ python3 SCRIPTS/learnings.py "<RUN>"
 Computes the H2 carry-forward learnings and the working / not-working read from counts in the
 run's own records. Nothing here is authored in chat.
 
-### 9. Build the decks and the evidence workbook
+### 10. Build the decks and the evidence workbook
 
 ```bash
 # 10-slide executive cut - what gets presented in a 30-minute slot
@@ -221,23 +272,28 @@ matter in terms of which accounts and which motions.
 **Slide 6 shows target, live pipeline and sized TAM in three separate columns on purpose.**
 Sized TAM is not commit, and collapsing them would let a large TAM number read as coverage.
 
-Verify before handing off — the PowerPoint canvas is unreliable, so check geometry instead:
+Verify before handing off — the PowerPoint canvas is unreliable, so check the file itself:
 
 ```bash
-python3 -c "
-from pptx import Presentation
-p = Presentation('<RUN>/fy27-h1-leadership.pptx')
-H, W = p.slide_height, p.slide_width
-for i, s in enumerate(p.slides, 1):
-    sh = [x for x in s.shapes if not (x.width >= W and x.height >= H)]
-    print(i, round(max(x.top + x.height for x in sh) / 914400, 2), 'of 7.5in')
-"
+python3 SCRIPTS/verify_deck.py "<RUN>/fy27-h1-leadership.pptx" --coverage "<RUN>/coverage.json"
+python3 SCRIPTS/verify_deck.py "<RUN>/fy27-h1-focus-accounts.pptx"
 ```
+
+Three defect classes, and a non-zero exit so it can gate a hand-off:
+
+* **overflow** — estimated rendered text height against the box, plus any shape off the slide.
+* **collision** — text shapes overlapping by more than 30% of the smaller one.
+* **inconsistency** — headline figures on the slides against `coverage.json`, including a
+  regression guard that the blended net-new figure never appears (it reads as Bucket 1
+  coverage while containing Bucket 2 money).
+
+Geometry alone has missed real text defects twice. **Also read the rendered text** of slides
+1, 6, 9 and 10 after any narrative change — a stale count passes every geometry check.
 
 The deck is the argument; the workbook is the evidence. `Sizing Detail` gives one row per product
 line with its rate and basis, so any figure on a slide can be traced in a single lookup.
 
-### 10. Hand off
+### 11. Hand off
 
 Give the teammate:
 

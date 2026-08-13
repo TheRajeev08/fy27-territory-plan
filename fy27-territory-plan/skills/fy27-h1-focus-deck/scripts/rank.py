@@ -25,6 +25,9 @@ import os
 import sys
 from datetime import date, datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import overrides  # noqa: E402
+
 DEFAULT_FINAL = 40
 MIN_FINAL, MAX_FINAL = 30, 50
 CANDIDATE_MULTIPLIER = 1.5
@@ -118,7 +121,7 @@ def trigger_score(triggers, as_of=None):
     return best, kept
 
 
-def collect(report, potential, crm=None):
+def collect(report, potential, crm=None, ov=None, as_of=None):
     """Join the report and the sizing output into one row per account."""
     rows = []
     sized = potential.get("accounts", {})
@@ -128,6 +131,13 @@ def collect(report, potential, crm=None):
         key = sid or account.get("name", "")
         entry = sized.get(key, {})
         activity = account.get("activity", {}) or {}
+        if ov is not None:
+            record = ov.for_account(sid, account.get("name", ""))
+            if record:
+                revised = overrides.apply_engagement(
+                    activity, record, as_of or date.today())
+                if revised:
+                    activity = revised
         crm_row = crm_accounts.get(sid, {}) if sid else {}
         rows.append({
             "key": key,
@@ -143,6 +153,7 @@ def collect(report, potential, crm=None):
             "twoWay": bool(activity.get("twoWay")),
             "lastActivity": activity.get("lastActivity", ""),
             "activityTier": activity.get("tier", "Unranked"),
+            "activitySource": activity.get("source", "crm"),
             "renewal": account.get("renewal", ""),
             "contacts": account.get("contacts", []),
             "nextAction": account.get("nextAction", ""),
@@ -222,7 +233,21 @@ def main():
     crm_path = opt("--crm", str, os.path.join(run_dir, "crm-context.json"))
     crm = load(crm_path, {}) or {}
 
-    rows = collect(report, potential, crm)
+    ov_data = overrides.load(opt("--overrides", str,
+                                os.path.join(run_dir, "overrides.json")))
+    ov = overrides.Overrides(ov_data) if ov_data else None
+    as_of = date.today()
+    raw_as_of = (ov_data or {}).get("asOf") or ""
+    if raw_as_of:
+        try:
+            as_of = date.fromisoformat(raw_as_of)
+        except ValueError:
+            pass
+
+    rows = collect(report, potential, crm, ov, as_of)
+    if ov is not None:
+        # An override that matched nothing is a silent lie in the deck. Fail instead.
+        ov.check("ranking")
     os.makedirs(run_dir, exist_ok=True)
 
     if mode == "stage1":

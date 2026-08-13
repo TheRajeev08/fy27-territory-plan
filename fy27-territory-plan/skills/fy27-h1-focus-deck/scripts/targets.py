@@ -60,15 +60,26 @@ def sized_by_product(focus):
 
 
 def pipeline_totals(crm, focus):
-    """H1 open pipeline for the focus set, split net-new vs renewal vs stale."""
+    """H1 open pipeline for the focus set, split by bucket as well as by kind.
+
+    The bucket split is the point. A single blended "net-new pipeline" figure sitting
+    beside Bucket 1 coverage implies it supports that target; in this book every
+    CRM-sourced net-new deal is Metered consumption, which supports Bucket 2 and
+    nothing else. Splitting makes an empty Bucket 1 visible instead of flattering.
+    """
+    empty = {"netNew": 0.0, "renewal": 0.0, "stale": 0.0, "accounts": 0,
+             "staleCount": 0, "byAccount": {}, "byBucket": {}, "byProduct": {},
+             "seller": 0.0, "crm": 0.0, "unclassified": 0.0, "nonProduct": 0.0,
+             "inferredProduct": 0.0}
     if not crm:
-        return {"netNew": 0.0, "renewal": 0.0, "stale": 0.0, "accounts": 0,
-                "staleCount": 0, "byAccount": {}}
+        return empty
     accounts = crm.get("accounts", {})
     ids = {a.get("salesforceId") for a in focus.get("accounts", []) if a.get("salesforceId")}
     net = ren = stale = 0.0
     stale_count = 0
-    by_account = {}
+    by_account, by_bucket, by_product = {}, {}, {}
+    seller = crm_sourced = unclassified = non_product = inferred = 0.0
+
     for sid in ids:
         rec = accounts.get(sid)
         if not rec:
@@ -79,8 +90,39 @@ def pipeline_totals(crm, focus):
         stale_count += sum(1 for o in rec.get("openPipeline", []) if o.get("stale"))
         if rec.get("h1PipelineValue", 0.0) > 0:
             by_account[sid] = rec["h1PipelineValue"]
+
+        for opp in rec.get("openPipeline", []):
+            if opp.get("stale") or opp.get("isRenewal") or not opp.get("inH1"):
+                continue
+            amount = float(opp.get("amount") or 0)
+            product = opp.get("product") or "Unclassified"
+            by_product[product] = by_product.get(product, 0.0) + amount
+            if opp.get("source") == "seller":
+                seller += amount
+            else:
+                crm_sourced += amount
+            # Product read off a naming convention rather than an explicit product
+            # field. Tracked so the deck can footnote how much of Bucket 1 rests on it.
+            if opp.get("productBasis") == "inferred-seat-naming":
+                inferred += amount
+            # Services carries no product ARR, so it belongs to no quota bucket.
+            # Unclassified is held out too rather than defaulted into one.
+            if product == "Services":
+                non_product += amount
+                continue
+            if product == "Unclassified":
+                unclassified += amount
+                continue
+            bucket = bucket_of(product) if product != "Consumption" else "Bucket 2"
+            by_bucket[bucket] = by_bucket.get(bucket, 0.0) + amount
+
     return {"netNew": round(net, 2), "renewal": round(ren, 2), "stale": round(stale, 2),
-            "accounts": len(by_account), "staleCount": stale_count, "byAccount": by_account}
+            "accounts": len(by_account), "staleCount": stale_count, "byAccount": by_account,
+            "byBucket": {k: round(v, 2) for k, v in by_bucket.items()},
+            "byProduct": {k: round(v, 2) for k, v in by_product.items()},
+            "seller": round(seller, 2), "crm": round(crm_sourced, 2),
+            "unclassified": round(unclassified, 2), "nonProduct": round(non_product, 2),
+            "inferredProduct": round(inferred, 2)}
 
 
 def build(targets, potential, focus, crm):
@@ -115,6 +157,7 @@ def build(targets, potential, focus, crm):
         gap = round(bucket_target_h1 - attained_h1, 2) if bucket_known else None
         coverage = (round(bucket_sized / bucket_target_h1, 2)
                     if bucket_known and bucket_target_h1 else None)
+        bucket_pipe = round(pipe.get("byBucket", {}).get(name, 0.0), 2)
 
         buckets.append({
             "bucket": name,
@@ -130,6 +173,11 @@ def build(targets, potential, focus, crm):
                               if bucket_known and bucket_target_h1 else None),
             "sizedPotential": bucket_sized,
             "coverageRatio": coverage,
+            "livePipeline": bucket_pipe,
+            # Gap left after attainment and dated pipeline both count. This is the
+            # number that has to come from somewhere not yet visible.
+            "uncoveredGap": (round(bucket_target_h1 - attained_h1 - bucket_pipe, 2)
+                             if bucket_known else None),
         })
 
     # Per-product coverage inside Bucket 1 is the detail that carries the story: the
@@ -141,6 +189,9 @@ def build(targets, potential, focus, crm):
             tam = round(sized.get(product, 0.0), 2) if product in sized else None
             if product == "Consumption":
                 tam = round(sum(v for p, v in sized.items() if bucket_of(p) == "Bucket 2"), 2)
+                live = round(pipe.get("byBucket", {}).get("Bucket 2", 0.0), 2)
+            else:
+                live = round(pipe.get("byProduct", {}).get(product, 0.0), 2)
             product_rows.append({
                 "bucket": bucket["bucket"],
                 "product": product,
@@ -149,6 +200,11 @@ def build(targets, potential, focus, crm):
                 "h1Target": line["h1Target"],
                 "targetKnown": line["targetKnown"],
                 "sizedPotential": tam,
+                "livePipeline": live,
+                # Coverage on dated pipeline is the honest read; coverage on TAM is
+                # only what the book could theoretically address.
+                "pipelineCoverage": (round(live / line["h1Target"], 2)
+                                     if line["targetKnown"] and line["h1Target"] else None),
                 "coverageRatio": (round(tam / line["h1Target"], 2)
                                   if line["targetKnown"] and line["h1Target"] and tam
                                   else None),
@@ -164,8 +220,13 @@ def build(targets, potential, focus, crm):
         "pipeline": pipe,
         "totals": {
             "h1Target": round(sum(b["h1Target"] for b in known_targets), 2),
-            "attainedH1": round(sum(b["attainedH1"] for b in buckets), 2),
+            # Attainment against the known targets only, so target minus attained
+            # equals gap. Mixing in a bucket whose target is TBD made the three
+            # numbers on the summary slide fail to reconcile.
+            "attainedH1": round(sum(b["attainedH1"] for b in known_targets), 2),
+            "attainedAllBuckets": round(sum(b["attainedH1"] for b in buckets), 2),
             "gap": round(sum(b["gap"] for b in known_targets), 2),
+            "livePipeline": round(sum(b["livePipeline"] for b in known_targets), 2),
             "sizedPotential": round(sum(b["sizedPotential"] for b in buckets), 2),
             "targetsComplete": len(known_targets) == len(buckets),
         },
