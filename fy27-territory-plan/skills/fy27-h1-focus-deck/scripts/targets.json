@@ -1,0 +1,50 @@
+{
+  "_comment": "TEMPLATE - fill in your own quota before running targets.py. Every target is null so the deck renders TBD rather than a number you did not set. Set a target to null at any time to suppress its coverage percentage instead of inventing a denominator.",
+  "fiscalYear": "FY27",
+  "half": "H1",
+  "basis": "net-new",
+  "_basisNote": "Targets are net-new / expansion ACV. Renewals are tracked separately and are not counted towards attainment.",
+  "buckets": {
+    "Bucket 1": {
+      "label": "Bucket 1 - GHE + GHAS",
+      "products": [
+        "GHE",
+        "GHAS"
+      ],
+      "targets": {
+        "GHE": {
+          "Q1": null,
+          "Q2": null
+        },
+        "GHAS": {
+          "Q1": null,
+          "Q2": null
+        }
+      },
+      "attained": {
+        "Q1": 0,
+        "Q2": 0
+      }
+    },
+    "Bucket 2": {
+      "label": "Bucket 2 - Consumption",
+      "products": [
+        "Copilot",
+        "AIU",
+        "Actions",
+        "Codespaces",
+        "Code Quality"
+      ],
+      "targets": {
+        "Consumption": {
+          "Q1": null,
+          "Q2": null
+        }
+      },
+      "attained": {
+        "Q1": 0,
+        "Q2": 0
+      }
+    }
+  }
+}

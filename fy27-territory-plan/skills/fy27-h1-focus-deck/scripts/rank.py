@@ -37,7 +37,9 @@ PLAYS = ("Innovate", "Trust", "Scale")
 # is weighted next because a warm account is materially likelier to close in a half;
 # triggers are the tiebreaker that says "why now" rather than "how big".
 W_STAGE1 = {"potential": 0.65, "communication": 0.35}
-W_STAGE2 = {"potential": 0.50, "communication": 0.25, "trigger": 0.25}
+# Stage 2 adds open pipeline as a fourth signal. An account carrying a live, H1-dated
+# opportunity is demonstrably in-motion, which is a stronger claim than sizing alone.
+W_STAGE2 = {"potential": 0.40, "pipeline": 0.20, "communication": 0.20, "trigger": 0.20}
 
 # A trigger is worth more when it implies budget or urgency. These weights are applied
 # to the trigger's type; recency then decays it.
@@ -116,15 +118,17 @@ def trigger_score(triggers, as_of=None):
     return best, kept
 
 
-def collect(report, potential):
+def collect(report, potential, crm=None):
     """Join the report and the sizing output into one row per account."""
     rows = []
     sized = potential.get("accounts", {})
+    crm_accounts = (crm or {}).get("accounts", {}) or {}
     for account in report.get("accounts", []):
         sid = account.get("salesforceId") or ""
         key = sid or account.get("name", "")
         entry = sized.get(key, {})
         activity = account.get("activity", {}) or {}
+        crm_row = crm_accounts.get(sid, {}) if sid else {}
         rows.append({
             "key": key,
             "salesforceId": sid,
@@ -145,6 +149,14 @@ def collect(report, potential):
             "winPlan": account.get("winPlan", ""),
             "evidence": account.get("evidence", []),
             "discoveryGaps": account.get("discoveryGaps", []),
+            "tpids": crm_row.get("tpids", []),
+            "msftOverlap": bool(crm_row.get("msftOverlap")),
+            "openPipeline": crm_row.get("openPipeline", []),
+            "h1PipelineValue": float(crm_row.get("h1PipelineValue") or 0),
+            "h1RenewalValue": float(crm_row.get("h1RenewalValue") or 0),
+            "stalePipelineValue": float(crm_row.get("stalePipelineValue") or 0),
+            "bestStage": crm_row.get("bestStage", ""),
+            "bestStageWeight": float(crm_row.get("bestStageWeight") or 0),
         })
     return rows
 
@@ -152,11 +164,20 @@ def collect(report, potential):
 def score_rows(rows, weights, triggers_by_key=None):
     pot = normalise({r["key"]: r["potentialArr"] for r in rows})
     comm = normalise({r["key"]: r["communicationScore"] for r in rows})
+    # Pipeline value is discounted by how far the best live opportunity has advanced, so
+    # a large deal parked at "Qualified" cannot outrank a smaller one near close.
+    pipe = normalise({
+        r["key"]: r.get("h1PipelineValue", 0.0) * max(r.get("bestStageWeight", 0.0), 0.3)
+        for r in rows
+    })
     for row in rows:
         row["potentialScore"] = round(pot.get(row["key"], 0.0), 1)
         row["commScore"] = round(comm.get(row["key"], 0.0), 1)
         composite = (weights["potential"] * row["potentialScore"]
                      + weights["communication"] * row["commScore"])
+        if "pipeline" in weights:
+            row["pipelineScore"] = round(pipe.get(row["key"], 0.0), 1)
+            composite += weights["pipeline"] * row["pipelineScore"]
         if "trigger" in weights:
             best, kept = trigger_score((triggers_by_key or {}).get(row["key"], []))
             row["triggerScore"] = round(best, 1)
@@ -198,7 +219,10 @@ def main():
     if not report or not potential:
         raise SystemExit("Cannot read report or potential JSON")
 
-    rows = collect(report, potential)
+    crm_path = opt("--crm", str, os.path.join(run_dir, "crm-context.json"))
+    crm = load(crm_path, {}) or {}
+
+    rows = collect(report, potential, crm)
     os.makedirs(run_dir, exist_ok=True)
 
     if mode == "stage1":
@@ -238,7 +262,8 @@ def main():
         rows = score_rows(rows, W_STAGE2, by_key)
         eligible = [r for r in rows if r["play"] in PLAYS
                     and (r["potentialArr"] > 0 or r["communicationScore"] > 0
-                         or r.get("triggerScore", 0) > 0)]
+                         or r.get("triggerScore", 0) > 0
+                         or r.get("h1PipelineValue", 0) > 0)]
         focus = eligible[:count]
         for i, row in enumerate(focus, 1):
             row["rank"] = i
@@ -263,6 +288,9 @@ def main():
                 "potentialArr": round(sum(r["potentialArr"] for r in focus), 2),
                 "currentArr": round(sum(float(r["current"].get("arr") or 0) for r in focus), 2),
                 "withTwoWay": sum(1 for r in focus if r["twoWay"]),
+                "withMsftOverlap": sum(1 for r in focus if r.get("msftOverlap")),
+                "h1Pipeline": round(sum(r.get("h1PipelineValue", 0) for r in focus), 2),
+                "h1Renewal": round(sum(r.get("h1RenewalValue", 0) for r in focus), 2),
             },
             "accounts": focus,
         }
