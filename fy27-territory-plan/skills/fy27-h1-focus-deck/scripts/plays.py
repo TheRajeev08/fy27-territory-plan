@@ -10,9 +10,12 @@ Trust conversation if it is regulated and an Innovate conversation if it is not,
 nothing in SuperDash distinguishes the two. Those accounts are marked
 `playPendingIndustry` at build time and settled here.
 
-This step only ever moves an account between Trust and Innovate. It cannot move one
-into or out of the play set, so the stage-1 eligibility filter is unaffected and the
-focus set cannot change size because enrichment ran or did not.
+This step only ever moves an account between Trust and Innovate, with one deliberate
+exception: an override carrying `sellerAsserted: true` and a `play` may also give a
+play to an account the ladder left "Unclassified". SuperDash has no row for a pure
+prospect, so "Unclassified" there means "no data", not "no opportunity". That
+exception does not confer a rank - rank.py still requires potential or engagement -
+so the focus set cannot grow just because a seller named an account.
 
 Two sources of truth, in order:
 
@@ -76,11 +79,19 @@ def refine(report, crm, overrides):
 
     changes, unknown = [], []
     for account in report.get("accounts", []) or []:
-        if not account.get("playPendingIndustry"):
-            continue
         sid = account.get("salesforceId") or ""
-        record = crm_accounts.get(sid, {}) or {}
         override = ov_accounts.get(sid) or by_norm.get(norm(account.get("name")))
+        # A seller-asserted play is the one case where this step may touch an account
+        # the ladder left outside the play set. SuperDash carries no row signal for a
+        # pure prospect, so "Unclassified" there means "no data", not "no opportunity".
+        # It is gated behind an explicit flag so it can never happen by accident, and
+        # it does NOT confer a rank: rank.py still requires potential or engagement,
+        # so an asserted account earns focus-set membership on evidence or not at all.
+        asserted = bool(override and override.get("sellerAsserted")
+                        and override.get("play"))
+        if not account.get("playPendingIndustry") and not asserted:
+            continue
+        record = crm_accounts.get(sid, {}) or {}
 
         industry = record.get("industry") or ""
         source = "salesforce"
@@ -113,7 +124,13 @@ def refine(report, crm, overrides):
         old_play = account.get("primaryPlay")
         account["primaryPlay"] = new_play
         account["plays"] = [new_play] + [p for p in account.get("plays", [])
-                                         if p != new_play]
+                                         if p != new_play and p != "Unclassified"]
+        if asserted:
+            # The account now has a play, so it is no longer unclassified. Record the
+            # assertion so every downstream surface can label it as seller conviction
+            # rather than observed product signal.
+            account["classified"] = True
+            account["sellerAsserted"] = True
         account["playBasis"] = basis.strip()
         account["industry"] = industry
         account["industrySource"] = source

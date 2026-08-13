@@ -29,7 +29,7 @@ Shape:
     {
       "asOf": "2026-08-13",
       "accounts": {
-        "Indus Valley Partners": {
+        "Example Account Ltd": {
           "reason": "GHE + GHAS deal agreed in conversation, not yet in Salesforce",
           "pipeline": [
             {"product": "GHE",  "seats": 335,      "quarter": "Q1",
@@ -38,11 +38,11 @@ Shape:
              "stage": "Qualified", "note": "..."}
           ]
         },
-        "Innodata India Pvt. Ltd": {
+        "Direct Customer Inc": {
           "msftOverlap": false,
           "reason": "GitHub direct - no Microsoft involvement"
         },
-        "GaragePreneurs Internet Pvt Ltd (SliceIT)": {
+        "Prospect Co": {
           "engagement": {"twoWay": true, "lastActivity": "2026-08-11",
                          "note": "GHAS conversation in progress"},
           "reason": "..."
@@ -135,6 +135,16 @@ def size_line(line, rates):
 
     seats = line.get("seats")
     committers = line.get("committers")
+
+    # A seller may price a SKU this module does not carry a rate for - Secret
+    # Protection, for example, sits below the Code Security list price. An explicit
+    # per-unit monthly rate keeps the quantity visible on the slide instead of
+    # collapsing the line to a bare dollar amount.
+    rate_month = line.get("rateMonth")
+    if rate_month and (committers or seats):
+        qty = float(committers or seats)
+        unit = "committers" if committers else "seats"
+        return (product, round(qty * float(rate_month) * 12, 2), "stated", qty, unit)
 
     if product == "GHE" and seats:
         rate, basis = rates.ghe_seat_year()
@@ -274,26 +284,40 @@ def quarter_close(quarter, h1_start, h1_end):
 
 
 def _main():
-    """Validate an overrides file against a focus set before a run depends on it.
+    """Validate an overrides file against the account universe before a run uses it.
 
-        python3 overrides.py check <overrides.json> <focus-accounts.json>
+        python3 overrides.py check <overrides.json> <fy27-territory-plan.json> [focus-accounts.json]
 
-    Catches the failure that matters: a key that matches no account. The rest of the
-    pipeline is fatal on that too, but finding it here costs seconds instead of a
-    full re-run, and reports every bad key at once rather than the first.
+    Catches the failure that matters: a key that matches no account anywhere. The rest
+    of the pipeline is fatal on that too, but finding it here costs seconds instead of
+    a full re-run, and reports every bad key at once rather than the first.
+
+    Validation is against the full report, not the focus set. An override may correctly
+    target an account that did not make the focus 40 - suppressing a misfiled
+    opportunity, or asserting a play on a prospect - and that is not an error. Pass the
+    focus set as well and those accounts are listed as `outsideFocusSet`, so they are
+    visible without being fatal.
     """
     if len(sys.argv) < 4 or sys.argv[1] != "check":
         raise SystemExit(_main.__doc__)
 
     ov = Overrides(load(sys.argv[2]))
-    focus = load(sys.argv[3]) or {}
-    rows = focus.get("accounts") or focus.get("focusAccounts") or []
+    universe = load(sys.argv[3]) or {}
+    rows = universe.get("accounts") or universe.get("focusAccounts") or []
     if not rows:
         raise SystemExit("no accounts found in %s" % sys.argv[3])
 
     for row in rows:
         ov.for_account(row.get("salesforceId", ""), row.get("name", ""))
     ov.check("overrides.py check")
+
+    outside = []
+    if len(sys.argv) > 4:
+        focus = load(sys.argv[4]) or {}
+        focus_ov = Overrides(load(sys.argv[2]))
+        for row in focus.get("accounts") or focus.get("focusAccounts") or []:
+            focus_ov.for_account(row.get("salesforceId", ""), row.get("name", ""))
+        outside = focus_ov.unmatched()
 
     matched = []
     for key in sorted(ov.accounts):
@@ -304,6 +328,7 @@ def _main():
             "pipelineLines": len(record.get("pipeline") or []),
             "engagement": bool(record.get("engagement")),
             "msftOverlap": record.get("msftOverlap"),
+            "inFocusSet": key not in outside,
             "assumptions": [
                 v.get("assumption") for v in
                 ([record.get("engagement") or {}] + list(record.get("pipeline") or []))
@@ -311,7 +336,7 @@ def _main():
             ],
         })
     print(json.dumps({"overrides": len(ov.accounts), "allMatched": True,
-                      "accounts": matched}, indent=1))
+                      "outsideFocusSet": outside, "accounts": matched}, indent=1))
 
 
 if __name__ == "__main__":

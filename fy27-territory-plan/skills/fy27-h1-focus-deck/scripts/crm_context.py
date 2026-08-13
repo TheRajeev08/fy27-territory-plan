@@ -195,6 +195,56 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
                 {"field": "msftOverlap", "value": False, "reason": reason})
             summary["overlapCleared"] += 1
 
+        if record.get("msftOverlap") is True and not rec.get("msftOverlap"):
+            # Salesforce carries no TPID for this account but the seller is working it
+            # jointly with the Microsoft team. Assert the overlap and label its source,
+            # so the deck never implies a TPID exists where one does not.
+            rec["msftOverlap"] = True
+            rec["msftOverlapSource"] = "seller"
+            asserted_tpid = record.get("tpid")
+            rec["tpids"] = [asserted_tpid] if asserted_tpid else []
+            rec.setdefault("overrides", []).append(
+                {"field": "msftOverlap", "value": True, "reason": reason})
+            summary["overlapAsserted"] = summary.get("overlapAsserted", 0) + 1
+
+        if record.get("msftCoSell") is True:
+            # Named on the co-sell slide regardless of focus-set membership. Used for
+            # accounts the seller is working with Microsoft that carry no product
+            # signal yet, so they cannot earn a rank.
+            rec["msftCoSell"] = True
+            rec["msftCoSellReason"] = record.get("coSellReason") or reason
+
+        # A Salesforce opportunity filed against the wrong account is not pipeline for
+        # that account. Suppression removes it and backs its value out of the H1
+        # figure, so the deal can be re-stated on the account that actually owns it
+        # without being counted twice.
+        for fragment in record.get("suppressOpportunities", []) or []:
+            needle = str(fragment).strip().lower()
+            if not needle:
+                continue
+            kept, dropped = [], []
+            for opp in rec.get("openPipeline", []):
+                (dropped if needle in str(opp.get("name", "")).lower() else kept).append(opp)
+            if not dropped:
+                continue
+            rec["openPipeline"] = kept
+            removed = sum(float(o.get("amount") or 0) for o in dropped if o.get("inH1")
+                          and not o.get("isRenewal"))
+            rec["h1PipelineValue"] = max(0.0, rec.get("h1PipelineValue", 0.0) - removed)
+            rec["suppressedOpportunities"] = rec.get("suppressedOpportunities", []) + [
+                {"name": o.get("name"), "amount": o.get("amount")} for o in dropped]
+            # bestStage may have come from a dropped opportunity, so recompute it.
+            rec["bestStageWeight"], rec["bestStage"] = 0.0, ""
+            for opp in kept:
+                weight = stage_weight(opp.get("stage") or "")
+                if weight > rec["bestStageWeight"]:
+                    rec["bestStageWeight"], rec["bestStage"] = weight, opp.get("stage") or ""
+            rec.setdefault("overrides", []).append(
+                {"field": "suppressOpportunities", "value": round(removed, 2),
+                 "reason": reason})
+            summary["opportunitiesSuppressed"] = (
+                summary.get("opportunitiesSuppressed", 0) + len(dropped))
+
         entries, unpriced = overrides.pipeline_entries(record, rates, h1_start, h1_end)
         summary["unpriced"].extend(
             {"account": rec.get("name", ""), "line": line} for line in unpriced)

@@ -168,11 +168,23 @@ python3 SCRIPTS/targets.py "<RUN>/potential.json" "<RUN>/focus-accounts.json" "<
 | On GHE, neither, **regulated** industry | **Trust** |
 | On GHE, neither, not regulated | **Innovate** |
 
+**"On GHE" means true GitHub Enterprise, not the blended GHE/VS column.** SuperDash
+carries `Total GHE/VS Seats (Vol and Metered)`, which sums GitHub Enterprise seats *and*
+Visual Studio bundle seats. A VS bundle **entitles** GHE but does not mean the customer
+is on GitHub — a pure-VS account is a migration target, not an established customer.
+`workbook.py` therefore classifies on
+`ghe_true = Current GHE License Seats + Current GHE Metered Users` and reports VS bundle
+seats separately as `vsBundleSeats`. VS seats still count towards *potential sizing*,
+because they are a legitimate migration TAM signal. Passing the blended figure into
+`classify_play()` routes migration targets into Trust/Innovate and is the single most
+damaging mistake available in this file.
+
 The last two rungs need `Account.Industry`, which only arrives with CRM ingest. Accounts
 waiting on it are marked `playPendingIndustry` and default to Innovate; `plays.py` resolves
 them once industry is known. It can only move an account **between Trust and Innovate**, never
 in or out of the play set, so the stage-1 candidate list cannot change depending on whether
-enrichment ran. Where industry is blank or miscoded, correct it in `overrides.json` with
+enrichment ran — the sole exception being an override that carries `sellerAsserted: true`,
+documented in step 8. Where industry is blank or miscoded, correct it in `overrides.json` with
 `industry` / `regulated` / `industryReason`, or assert the play directly with `play` /
 `playReason`.
 
@@ -214,23 +226,50 @@ let the existing weights move the account — or report that they did not.
 {
   "accounts": {
     "001XXXXXXXXXXXXXXX": {              // Salesforce ID, with name fallback
-      "name": "Indus Valley Partners",
+      "name": "Example Account Ltd",
       "pipeline": [                       // sized through pricing.json, never typed as dollars
         {"product": "GHE",  "seats": 335,      "quarter": "FY27 Q1", "reason": "agreed, not yet raised"},
         {"product": "GHAS", "committers": 285, "quarter": "FY27 Q1", "reason": "agreed, not yet raised"}
       ],
       "engagement": {"twoWay": true, "meetings": 1, "reason": "live GHAS discussion"},
-      "msftOverlap": false                // e.g. GitHub-direct account wrongly carrying TPIDs
+      "msftOverlap": false,               // e.g. GitHub-direct account wrongly carrying TPIDs
+      "msftCoSell": true,                 // name on the Microsoft slide even without a TPID
+      "msftCoSellReason": "worked jointly with the Microsoft account team",
+      "play": "Scale",                    // correct a play the ladder got wrong
+      "playReason": "why the ladder is wrong here — printed as the play basis",
+      "sellerAsserted": true,             // REQUIRED to give a play to an Unclassified account
+      "suppressOpportunities": ["Acme India"]  // drop a misfiled opp by name fragment
     }
   }
 }
 ```
 
+A pipeline line may carry `rateMonth` where the SKU has no rate in `pricing.json`
+(Secret Protection, for example), so the quantity stays visible instead of collapsing
+to a bare dollar amount.
+
 Then apply and re-run the downstream steps:
 
 ```bash
-python3 SCRIPTS/overrides.py check "<RUN>/overrides.json" "<RUN>/focus-accounts.json"
+python3 SCRIPTS/overrides.py check "<RUN>/overrides.json" \
+    "<RUN>/fy27-territory-plan.json" "<RUN>/focus-accounts.json"
 ```
+
+Keys are validated against the **full report**, not the focus set — overrides
+legitimately target accounts outside the 40 (suppressing a misfiled opportunity,
+asserting a play on a prospect). The optional third argument reports which overrides
+fall outside the focus set as information, not as an error.
+
+**`sellerAsserted` breaks an invariant on purpose.** `plays.py` normally only moves
+accounts *between* plays, never in or out of the play set, so the candidate list never
+depends on whether enrichment ran. A prospect with no product row in SuperDash is
+"Unclassified" and would be skipped entirely. Setting `sellerAsserted: true` alongside
+`play` lets the seller put such an account into a play. It is gated behind that explicit
+flag so it can never happen by accident. Note that an account entering this way still
+has to *earn* a rank: with no seats, committers or logged activity it will score zero on
+potential and communication and will not reach the focus 40. That is correct behaviour —
+it appears on the Microsoft co-sell slide with a blank rank rather than being padded
+into the ranking.
 
 Four guarantees, each deliberate:
 
@@ -279,7 +318,7 @@ run's own records. Nothing here is authored in chat.
 ### 10. Build the decks and the evidence workbook
 
 ```bash
-# 10-slide executive cut - what gets presented in a 30-minute slot
+# 11-slide executive cut - what gets presented in a 30-minute slot
 python3 SCRIPTS/exec_deck.py "<RUN>" "<RUN>/fy27-h1-leadership.pptx"
 
 # 21-slide evidence pack - the detail brought as backup
@@ -291,23 +330,38 @@ python3 SCRIPTS/focus_workbook.py "<RUN>/fy27-territory-plan.json" "<RUN>/potent
 ```
 
 `exec_deck.py` imports its `Deck` class and theme from `deck.py`, so both decks stay visually
-identical and only one file owns rendering behaviour. Its ten slides map to the seven questions:
+identical and only one file owns rendering behaviour. Its eleven slides map to the seven
+questions:
 
 | # | Slide | Question |
 |---|---|---|
 | 1 | Q1 scorecard — attainment against Bucket 1 and Bucket 2 | opener |
 | 2 | H2 learnings carried forward | opener |
-| 3 | Portfolio by play, with TPID flags | opener |
+| 3 | Key deals in play — deal, size, stage, where it stands | opener |
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
-| 5 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 6 | Coverage — target vs live, dated pipeline | Q4 |
-| 7 | How I get there — motions and account sequencing | **Q4** |
-| 8 | Microsoft overlap and partner leverage | Q5 |
-| 9 | What's working, what's not | Q6 |
-| 10 | Asks — leadership and cross-functional | Q7 |
+| 5 | Portfolio by play, with TPID flags | Q2 |
+| 6 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
+| 7 | Coverage — target vs live, dated pipeline | Q4 |
+| 8 | How I get there — motions and account sequencing | **Q4** |
+| 9 | Microsoft overlap and partner leverage | Q5 |
+| 10 | What's working, what's not | Q6 |
+| 11 | Asks — leadership and cross-functional | Q7 |
 
-Question 2 is carried by slides 3 and 7 rather than a slide of its own, because plays only
+Question 2 is carried by slides 5 and 8 rather than a slide of its own, because plays only
 matter in terms of which accounts and which motions.
+
+**Slide 3 is scoped to the whole book, not the focus 40.** Every other slide counts focus
+accounts only. A live deal is a live deal wherever its account ranks, and because ranking
+scores *modelled whitespace*, an account that has already committed seats can rank low while
+carrying one of the largest deals on the desk. Deals shown from outside the focus set are
+marked `*` and the footnote states that their value is excluded from the coverage figures,
+so the two slides cannot be read as contradicting each other.
+
+**A negative uncovered gap is rendered as language, not a minus sign.** Once dated pipeline
+exceeds the remaining gap, `uncoveredGap` goes negative; printing "$-16K uncovered" reads as
+a hole when it is a surplus. Slides 7 and 11 resolve the sign into words and, when a bucket
+only nets out because one product over-covers, say so explicitly rather than reporting
+comfort.
 
 **No slide carries modelled potential ARR.** Sizing is presented on slide 5 in units that can
 be verified — seats, active committers, invoiced credits — and every dollar figure elsewhere is

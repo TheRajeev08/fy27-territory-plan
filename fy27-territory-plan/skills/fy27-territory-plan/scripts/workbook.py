@@ -79,7 +79,10 @@ def classify_play(ghe, copilot, ghas, regulated=None):
         play; an account that is not on the platform is exactly its target. (The
         previous engine scored *existing* GHE seats as a Scale signal, which pushed
         established customers into a migration motion and left greenfield accounts
-        out of it.)
+        out of it.) `ghe` here must be **true GitHub Enterprise seats** - licence
+        seats plus metered users. The SuperDash "GHE/VS" total also counts Visual
+        Studio bundle seats, which entitle GHE without the customer being on it;
+        feeding that blended figure in here misreads pure-VS accounts as customers.
       * On GHE with Copilot at or above half the GHE licence count -> **Trust**.
         Agentic delivery has landed at scale, so the next conversation is governance,
         security and quality over that volume of generated code.
@@ -343,6 +346,15 @@ def analyze(rows, source_name, activity=None, contacts=None):
         rows_for_account = [x[2] for x in items]
         def total(key): return sum(num(get(r, key)) for r in rows_for_account)
         ghe = total("Total GHE/VS Seats (Vol and Metered)")
+        # `ghe` above combines GitHub Enterprise with **Visual Studio bundle** seats.
+        # A VS bundle entitles GHE but does not mean the customer is *on* GitHub, so
+        # using it to decide a play routes pure-Visual-Studio accounts into Trust or
+        # Innovate when they are in fact migration targets. `ghe_true` counts only
+        # seats that represent an actual GitHub Enterprise footprint, and it is what
+        # the play ladder reads. The blended figure stays for capacity and evidence,
+        # where VS bundles are a legitimate migration TAM signal.
+        ghe_true = total("Current GHE License Seats") + total("Current GHE Metered Users")
+        vs_bundle = max(ghe - ghe_true, 0)
         cf = total("Current CfB Seats (incl. CE & CS)")
         ubb = total("Current Month UBB Users")
         last_ubb = total("Last Month UBB Users")
@@ -350,7 +362,7 @@ def analyze(rows, source_name, activity=None, contacts=None):
         ghas = total("GHAS total volume and metered")
         gha = total("GHAzDO Seats")
         ado = total("ADO TAM - GHAzDO Accts Only")
-        consumption = f"GHE/VS {ghe:.0f}; CfB {cf:.0f}; UBB {ubb:.0f} (prior {last_ubb:.0f}); committers L90d {committers:.0f}; GHAS {ghas:.0f}; GHAzDO {gha:.0f}; ADO TAM {ado:.0f}; LM consumption ${total('LM Consumption $'):.0f}"
+        consumption = f"GHE {ghe_true:.0f} + VS bundle {vs_bundle:.0f}; CfB {cf:.0f}; UBB {ubb:.0f} (prior {last_ubb:.0f}); committers L90d {committers:.0f}; GHAS {ghas:.0f}; GHAzDO {gha:.0f}; ADO TAM {ado:.0f}; LM consumption ${total('LM Consumption $'):.0f}"
         evidence, gaps, scores = [], [], {}
         if cf > 0 or ubb > 0 or last_ubb > 0:
             scores["Innovate"] = min(3, 1 + int(last_ubb > 0) + int(ubb > last_ubb or total("GHE/VS to CfB Potential") > 0))
@@ -365,10 +377,10 @@ def analyze(rows, source_name, activity=None, contacts=None):
         renewal_candidates = sorted({date_value(get(r, "Next Renewal Date (GH)") or get(r, "EA Renewal Date (MSFT)")) for r in rows_for_account} - {""})
         renewal = renewal_candidates[-1] if renewal_candidates else ""
         renewal_conflict = len(renewal_candidates) > 1
-        scale_signal = ado + gha + total("Current GHE License Seats") + total("Current GHE Metered Users")
+        scale_signal = ado + gha + vs_bundle
         if scale_signal > 0 or ghe >= 100 or committers >= 50:
             scores["Scale"] = min(3, 1 + int(ado > 0 or gha > 0))
-            evidence.append(f"Scale signal: {ghe:.0f} GHE/VS seats, {committers:.0f} active committers L90d, ADO TAM {ado:.0f}, GHAzDO {gha:.0f}")
+            evidence.append(f"Scale signal: {ghe_true:.0f} GHE seats + {vs_bundle:.0f} VS bundle seats, {committers:.0f} active committers L90d, ADO TAM {ado:.0f}, GHAzDO {gha:.0f}")
         else: gaps.append("Platform consolidation, incumbent tools, and renewal pressure require discovery")
         # The play itself is decided by the ladder in classify_play, not by these
         # scores. The scores stay because they still drive execution readiness and the
@@ -376,8 +388,8 @@ def analyze(rows, source_name, activity=None, contacts=None):
         # account, not of which motion it belongs in.
         classified = bool(scores) or ghe > 0 or cf > 0 or ghas > 0
         if classified:
-            primary = classify_play(ghe, cf, ghas)
-            play_basis = play_reason(ghe, cf, ghas)
+            primary = classify_play(ghe_true, cf, ghas)
+            play_basis = play_reason(ghe_true, cf, ghas)
             plays = [primary] + [p for p in sorted(scores, key=lambda p: (-scores[p], p))
                                  if p != primary]
         else:
@@ -386,7 +398,7 @@ def analyze(rows, source_name, activity=None, contacts=None):
             scores["Unclassified"] = 0
             play_basis = "No GHE, Copilot or GHAS signal in the upload."
         readiness = round(min(100, scores.get(primary, 0) / 3 * 80 + min(20, len(evidence) * 7)), 2) if classified else None
-        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "playBasis": play_basis, "playPendingIndustry": bool(ghe > 0 and cf <= 0 and ghas <= 0), "score": scores.get(primary, 0), "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe, "copilotSeats": cf}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
+        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "playBasis": play_basis, "playPendingIndustry": bool(ghe_true > 0 and cf <= 0 and ghas <= 0), "score": scores.get(primary, 0), "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe_true - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe_true, "vsBundleSeats": vs_bundle, "copilotSeats": cf}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
     accounts.sort(key=lambda a: (-a["score"], -len(a["plays"]), a["name"].lower()))
     for account in accounts:
         components = account["revenueSignals"]
