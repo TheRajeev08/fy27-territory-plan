@@ -61,6 +61,38 @@ accounts with the reason each one ranks there.
 
 ---
 
+## Building the leadership presentation
+
+Once the plan has run, ask for the H1 deck:
+
+> Build my H1 focus accounts deck
+
+This takes longer — 10–20 minutes — because it researches live news for each candidate account
+before it ranks them. Leave it running.
+
+**What you get:** a PowerPoint naming **30–50 focus accounts for the half**, answering the seven
+questions a leader will ask:
+
+| Slide | Question it answers |
+|---|---|
+| Key accounts | Which accounts, tiered Must-win / Build / Develop, and why now |
+| Plays | Which play runs on each, and the first move for each play |
+| Potential | The prize in dollars: AIU, Copilot seats, GHE + GHAS seats, ACR and ARR |
+| **How I win** | One slide per play, grounded in GitHub's Product Adoption Framework, plus the operating cadence and half-level milestones |
+| Leverage | Your mapped partners, their GitHub PDM, and Microsoft CSP involvement |
+| Honest read | What's working and what isn't, with the numbers attached |
+| Asks | What you need from leadership, Partnerships, Marketing and Ops |
+
+Alongside it you get an **evidence workbook**. When someone challenges a number on a slide, the
+`Sizing Detail` tab shows exactly where it came from — the quantity, the rate, and whether that
+rate was observed on the account, taken from published pricing, or derived.
+
+**Ask for a different number of accounts** any time:
+
+> Build my H1 deck with 30 accounts
+
+---
+
 ## Reading the plays
 
 | Play | Why an account landed here | Your angle |
@@ -96,6 +128,9 @@ Product Adoption Framework for concrete next actions tied to each account's prod
 | Copilot doesn't recognize the request | The app wasn't fully quit. `Cmd + Q`, reopen, try again |
 | Plan works but no Salesforce/Gong data | You need the `github-revenue` plugin connected and Salesforce-authenticated. Everything else still works |
 | Excel file won't generate | Run `python3 -m pip install --user xlsxwriter` |
+| Presentation won't generate | Run `python3 -m pip install --user python-pptx` |
+| Deck says "no partner relationships mapped" | That's a data gap, not an error — partner records exist per opportunity, and most accounts have none. The deck turns it into an ask |
+| Deck shows 0 triggers for most accounts | Only news with a real date *and* a real source link is counted. Unverifiable claims are dropped on purpose |
 | No Revenue MCP access at all | Use the browser version: <https://therajeev08.github.io/fy27-territory-plan-team/> — no CRM, but classification, Sprint Focus and Excel export all work |
 
 Your CRM data stays on your machine, runs under your own credentials, and is never shared

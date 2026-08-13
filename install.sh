@@ -77,11 +77,31 @@ else
     fi
 fi
 
+echo "-> Checking the presentation component..."
+if python3 -c "import pptx" >/dev/null 2>&1; then
+    echo "   Already installed."
+else
+    python3 -m pip install --user --quiet python-pptx >/dev/null 2>&1
+    if ! python3 -c "import pptx" >/dev/null 2>&1; then
+        echo ""
+        echo "!  The plugin is installed, but the presentation component is not."
+        echo "   The territory plan will still work; only the H1 focus deck needs this."
+        echo "   To fix it, run:"
+        echo "       python3 -m pip install --user python-pptx"
+        echo ""
+    else
+        echo "   Installed."
+    fi
+fi
+
 echo ""
 echo "==================================================="
 echo " Done. Two more steps:"
 echo ""
 echo "   1. Quit the Copilot app completely and reopen it"
 echo "   2. Type:  Build my FY27 territory plan"
+echo ""
+echo " Then, for the leadership presentation, type:"
+echo "      Build my H1 focus accounts deck"
 echo "==================================================="
 echo ""

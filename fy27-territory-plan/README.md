@@ -58,11 +58,12 @@ after cloning is expected.
 | `github-revenue` plugin, Salesforce-authenticated | Live activity, contacts, pipeline, Gong |
 | Python 3.9+ | Classification and scoring |
 | `xlsxwriter` | The Excel workbook export |
+| `python-pptx` | The H1 focus presentation |
 
-Install the one third-party dependency:
+Install the two third-party dependencies:
 
 ```bash
-python3 -m pip install --user xlsxwriter
+python3 -m pip install --user xlsxwriter python-pptx
 ```
 
 Without Revenue MCP the plugin still works — plays, Sprint Focus, and the workbook all build
@@ -78,6 +79,15 @@ locally. Engagement simply stays **Unknown**, which is reported honestly rather 
    open pipeline, and Gong calls for the shortlist, with coverage and an as-of date.
 4. **Sprint Focus** — a ranked shortlist of who to book this sprint and why.
 5. **Excel workbook** — eight sheets, executive dashboard first.
+6. **H1 focus presentation** — ask for it separately, once the plan has run:
+
+   > Build my H1 focus accounts deck
+
+   A 20-slide PowerPoint naming 30–50 focus accounts for the half, sized in AIU, Copilot seats and
+   GHE + GHAS, with the execution plan grounded in GitHub's Product Adoption Framework, Microsoft
+   and partner leverage, an honest working / not-working read, and the asks of leadership. It ships
+   with a companion evidence workbook whose `Sizing Detail` sheet gives one row per sized line with
+   its rate and basis, so any figure on a slide can be traced in a single lookup.
 
 ## How enrichment stays trustworthy
 
@@ -105,6 +115,7 @@ Engagement tiers are evidence-first, not score-first:
 plugin.json
 skills/fy27-territory-plan/     orchestrator + scripts (workbook, enrichment, sprint, run setup)
 skills/fy27-crm-enrichment/     pinned SOQL and guardrails
+skills/fy27-h1-focus-deck/      H1 focus presentation: sizing, ranking, PPTX, evidence workbook
 extensions/fy27-territory-plan/ canvas that renders the plan in-app
 enrich-test.py                  regression tests for the enrichment transform
 ```

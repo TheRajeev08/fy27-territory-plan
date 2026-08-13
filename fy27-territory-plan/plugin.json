@@ -1,7 +1,7 @@
 {
   "name": "fy27-territory-plan",
-  "description": "Build an FY27 GitHub territory plan from a SuperDash export, classified into the Innovate, Trust, and Scale revenue plays and enriched live from Salesforce and Gong using the invoking teammate's own credentials. Renders an interactive app and exports an Excel workbook.",
-  "version": "1.0.0",
+  "description": "Build an FY27 GitHub territory plan from a SuperDash export, classified into the Innovate, Trust, and Scale revenue plays and enriched live from Salesforce and Gong using the invoking teammate's own credentials. Renders an interactive app, exports an Excel workbook, and builds the H1 focus-accounts leadership presentation.",
+  "version": "1.1.0",
   "author": {
     "name": "Rajeev Ranjan",
     "email": "TheRajeev08@users.noreply.github.com"
@@ -17,11 +17,15 @@
     "salesforce",
     "gong",
     "copilot",
-    "ghas"
+    "ghas",
+    "presentation",
+    "h1-focus",
+    "territory-planning"
   ],
   "category": "planning",
   "skills": [
     "./skills/fy27-territory-plan",
-    "./skills/fy27-crm-enrichment"
+    "./skills/fy27-crm-enrichment",
+    "./skills/fy27-h1-focus-deck"
   ]
 }
