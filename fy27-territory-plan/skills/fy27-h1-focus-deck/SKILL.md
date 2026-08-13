@@ -152,8 +152,29 @@ Run each emitted SOQL query with `query_salesforce`, save the combined result as
 
 ```bash
 python3 SCRIPTS/crm_context.py ingest "<RUN>/crm/raw.json" "<RUN>"
+python3 SCRIPTS/plays.py "<RUN>"
 python3 SCRIPTS/targets.py "<RUN>/potential.json" "<RUN>/focus-accounts.json" "<RUN>"
 ```
+
+**`plays.py` must run after CRM ingest and before stage 2.** Play is assigned in
+`workbook.py` from the account's own product footprint, using a deterministic ladder:
+
+| Condition | Play |
+|---|---|
+| Not on GHE | **Scale** — this is the migration and displacement play |
+| On GHE, Copilot on ≥ 50% of GHE licences | **Trust** |
+| On GHE, Copilot on < 50% | **Innovate** |
+| On GHE with GHAS, no Copilot | **Trust** — security has already landed |
+| On GHE, neither, **regulated** industry | **Trust** |
+| On GHE, neither, not regulated | **Innovate** |
+
+The last two rungs need `Account.Industry`, which only arrives with CRM ingest. Accounts
+waiting on it are marked `playPendingIndustry` and default to Innovate; `plays.py` resolves
+them once industry is known. It can only move an account **between Trust and Innovate**, never
+in or out of the play set, so the stage-1 candidate list cannot change depending on whether
+enrichment ran. Where industry is blank or miscoded, correct it in `overrides.json` with
+`industry` / `regulated` / `industryReason`, or assert the play directly with `play` /
+`playReason`.
 
 TPIDs live on `MSFT_TPID__c`, `MSFT_All_TPIDs__c` and `MS_Sales_TPID_Best_Match__c`. There is
 no `TPID__c`. An account with a TPID is run as co-sell with the Microsoft account team and a
@@ -227,6 +248,25 @@ Four guarantees, each deliberate:
 Record any genuine assumption under an `assumption` key alongside `reason`, so the deck can be
 defended line by line and the assumption can be reverted to see what moves.
 
+#### Seller learnings
+
+The computed learnings can be corrected or extended from the same file. Each entry may carry
+`replaces` (a headline prefix; **fatal if it matches nothing**, so a reworded computed learning
+can never leave the seller's version arguing beside it), plus `headline`, `detail`,
+`carryForward` and `evidence`. Text may use the tokens `{focusTotal}`, `{ghasAccounts}`,
+`{ghasPipeline}` and `{ghasCoverage}`, substituted from run data; an unresolved token is fatal.
+
+```jsonc
+"learnings": [
+  {
+    "replaces": "GHAS is a story we told",
+    "headline": "GHAS is a strong product we under-narrated",
+    "detail": "... {ghasPipeline} of GHAS is close-dated in H1, {ghasCoverage}x the target.",
+    "carryForward": "Lead security conversations with the differentiators, not an attach ask."
+  }
+]
+```
+
 ### 9. Derive the learnings
 
 ```bash
@@ -260,7 +300,7 @@ identical and only one file owns rendering behaviour. Its ten slides map to the 
 | 3 | Portfolio by play, with TPID flags | opener |
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
 | 5 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 6 | Coverage — target vs live pipeline vs sized TAM | Q4 |
+| 6 | Coverage — target vs live, dated pipeline | Q4 |
 | 7 | How I get there — motions and account sequencing | **Q4** |
 | 8 | Microsoft overlap and partner leverage | Q5 |
 | 9 | What's working, what's not | Q6 |
@@ -269,8 +309,11 @@ identical and only one file owns rendering behaviour. Its ten slides map to the 
 Question 2 is carried by slides 3 and 7 rather than a slide of its own, because plays only
 matter in terms of which accounts and which motions.
 
-**Slide 6 shows target, live pipeline and sized TAM in three separate columns on purpose.**
-Sized TAM is not commit, and collapsing them would let a large TAM number read as coverage.
+**No slide carries modelled potential ARR.** Sizing is presented on slide 5 in units that can
+be verified — seats, active committers, invoiced credits — and every dollar figure elsewhere is
+dated pipeline, a set target, or invoiced attainment. Potential ARR still drives *ranking*
+(`W_STAGE1` 0.65, `W_STAGE2` 0.40), because it is a reasonable relative ordering signal; it is
+simply never shown as though it were money in hand.
 
 Verify before handing off — the PowerPoint canvas is unreliable, so check the file itself:
 

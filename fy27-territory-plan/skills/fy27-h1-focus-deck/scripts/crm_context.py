@@ -54,7 +54,7 @@ def fiscal_h1(as_of):
     return "FY%d" % (fy % 100), h1[0], h1[1], h1[2]
 
 
-ACCOUNT_QUERY = """SELECT Id, Name, MSFT_TPID__c, MSFT_All_TPIDs__c, MS_Sales_TPID_Best_Match__c
+ACCOUNT_QUERY = """SELECT Id, Name, Industry, MSFT_TPID__c, MSFT_All_TPIDs__c, MS_Sales_TPID_Best_Match__c
 FROM Account WHERE Id IN (%s)"""
 
 OPPORTUNITY_QUERY = """SELECT Id, Name, AccountId, StageName, Amount, CloseDate, Type,
@@ -237,6 +237,7 @@ def ingest(raw, as_of, ov=None, rates=None):
         )
         accounts[str(sid)] = {
             "name": pick(row, "Name", "name") or "",
+            "industry": pick(row, "Industry", "industry") or "",
             "tpids": tpids,
             "msftOverlap": bool(tpids),
             "openPipeline": [],

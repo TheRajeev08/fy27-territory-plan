@@ -28,6 +28,10 @@ from pptx.enum.text import PP_ALIGN  # noqa: E402
 
 PLAYS = ("Innovate", "Trust", "Scale")
 
+# Slide 2 renders one row per learning. Six wrapped rows is what fits between BODY_TOP
+# and the footnote; adding a seventh needs the row height revisited, not this bumped.
+LEARNING_ROWS = 6
+
 PLAY_THESIS = {
     "Innovate": "AI-native delivery - Copilot seats and AI credits as the entry motion",
     "Trust": "Secure the software supply chain - GHAS on committer bases already in place",
@@ -120,7 +124,8 @@ def slide_1_scorecard(deck, coverage, focus):
     b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
     cards = [
         ("Focus accounts", num(focus.get("selectedCount")), "of %s in book" % num(focus.get("bookSize"))),
-        ("Potential ARR H1", money(ftotals.get("potentialArr")), "sized, new business"),
+        ("In two-way comms", num(ftotals.get("withTwoWay")),
+         "of %s focus accounts" % num(focus.get("selectedCount"))),
         ("Current ARR", money(ftotals.get("currentArr")), "installed base in focus set"),
         ("Bucket 1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in H1"),
     ]
@@ -147,17 +152,18 @@ def slide_2_learnings(deck, learnings):
                             "is the part that matters.")
     rows = []
     colors = {}
-    for index, item in enumerate(learnings.get("learnings", [])[:5]):
+    items = learnings.get("learnings", [])[:LEARNING_ROWS]
+    for index, item in enumerate(items):
         rows.append([
-            truncate(item.get("headline", ""), 42),
-            truncate(item.get("detail", ""), 118),
-            truncate(item.get("carryForward", ""), 76),
+            item.get("headline", ""),
+            item.get("detail", ""),
+            item.get("carryForward", ""),
         ])
         colors[index] = WARN if index < 3 else ACCENT
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Learning", "What the record shows", "What I do differently in H1"],
-               [3.0, 6.2, 4.1], rows, row_h=0.92, size=11, colors=colors)
+               [3.0, 6.2, 4.1], rows, row_h=0.62, size=10.5, colors=colors, wrap=True)
 
     deck.footnote(slide, "Derived from focus-accounts.json, coverage.json and Salesforce open "
                          "opportunity records - every figure above is reproducible.")
@@ -182,7 +188,6 @@ def slide_3_key_accounts(deck, focus):
         rows.append([
             truncate(account.get("name", ""), 26),
             account.get("play", ""),
-            money(account.get("potentialArr")),
             money(pipeline) if pipeline else "\u2014",
             "Yes" if account.get("msftOverlap") else "\u2014",
             truncate(why, 62),
@@ -190,16 +195,17 @@ def slide_3_key_accounts(deck, focus):
         colors[index] = PLAY_COLOR.get(account.get("play"), ACCENT)
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
-               ["Account", "Play", "Potential ARR", "Live H1 pipe", "MSFT", "Why now"],
-               [2.6, 1.3, 1.5, 1.4, 0.8, 5.4], rows, row_h=0.44, size=11, colors=colors)
+               ["Account", "Play", "Live H1 pipe", "MSFT", "Why now"],
+               [2.9, 1.4, 1.5, 0.9, 6.3], rows, row_h=0.44, size=11, colors=colors)
 
     bottom = float(BODY_TOP) + Inches(0.3) + Inches(0.44) * len(rows) + Inches(0.24)
-    total = sum(float(a.get("potentialArr") or 0) for a in tier1)
+    two_way = sum(1 for a in tier1 if a.get("twoWay"))
+    with_pipe = sum(1 for a in tier1 if float(a.get("h1PipelineValue") or 0) > 0)
+    with_tpid = sum(1 for a in tier1 if a.get("msftOverlap"))
     deck.text(slide, MARGIN, Emu(int(bottom)), W - 2 * MARGIN, Inches(0.34),
-              "%d must-win accounts carry %s of sized potential \u2014 %s of the focus set total."
-              % (len(tier1), money(total),
-                 "%.0f%%" % (100.0 * total / max(1.0, float(focus.get("totals", {}).get("potentialArr") or 1)))),
-              size=12, color=TEXT)
+              "%d must-wins \u00b7 %d in two-way comms \u00b7 %d with a dated H1 deal \u00b7 "
+              "%d co-sellable through a Microsoft TPID."
+              % (len(tier1), two_way, with_pipe, with_tpid), size=11.5, color=TEXT)
     deck.footnote(slide, "Tier 2 and Tier 3 accounts are worked to the same plays on a lighter "
                          "cadence; the full 40 are in the evidence workbook.")
     return slide
@@ -221,7 +227,8 @@ def slide_4_portfolio(deck, focus, coverage):
     col_w = Inches(4.02)
     for play in PLAYS:
         rows = by_play[play]
-        value = sum(float(r.get("potentialArr") or 0) for r in rows)
+        pipe = sum(float(r.get("h1PipelineValue") or 0) for r in rows)
+        engaged = sum(1 for r in rows if r.get("twoWay"))
         overlap = sum(1 for r in rows if r.get("msftOverlap"))
         color = PLAY_COLOR[play]
 
@@ -232,17 +239,18 @@ def slide_4_portfolio(deck, focus, coverage):
                   size=13, color=color, bold=True, space=True)
         deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(0.62))),
                   Emu(int(col_w - Inches(0.52))), Inches(0.5),
-                  "%s accounts \u00b7 %s" % (len(rows), money(value)),
+                  "%s accounts \u00b7 %s live" % (len(rows), money(pipe) if pipe else "no"),
                   size=19, color=WHITE, bold=True)
         deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(1.06))),
                   Emu(int(col_w - Inches(0.52))), Inches(0.56),
                   PLAY_THESIS[play], size=11, color=MUTED)
         deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(1.72))),
                   Emu(int(col_w - Inches(0.52))), Inches(0.26),
-                  "%d WITH MICROSOFT TPID \u00b7 CO-SELL" % overlap,
+                  "%d IN TWO-WAY COMMS \u00b7 %d WITH MICROSOFT TPID"
+                  % (engaged, overlap),
                   size=9.5, color=color, bold=True, space=True)
 
-        top = sorted(rows, key=lambda r: -float(r.get("potentialArr") or 0))[:6]
+        top = sorted(rows, key=lambda r: int(r.get("rank") or 999))[:6]
         cursor = float(BODY_TOP + Inches(2.08))
         for account in top:
             flag = " \u25c6" if account.get("msftOverlap") else ""
@@ -250,7 +258,7 @@ def slide_4_portfolio(deck, focus, coverage):
                       Emu(int(col_w - Inches(1.5))), Inches(0.28),
                       truncate(account.get("name", ""), 28) + flag, size=10.5, color=TEXT)
             deck.text(slide, Emu(int(x + col_w - Inches(1.24))), Emu(int(cursor)),
-                      Inches(0.98), Inches(0.28), money(account.get("potentialArr")),
+                      Inches(0.98), Inches(0.28), "#%d" % int(account.get("rank") or 0),
                       size=10.5, color=color, bold=True, align=PP_ALIGN.RIGHT)
             cursor += Inches(0.33)
         if len(rows) > 6:
@@ -264,7 +272,7 @@ def slide_4_portfolio(deck, focus, coverage):
               "team and a delivery partner. %d of %d focus accounts qualify."
               % (focus.get("totals", {}).get("withMsftOverlap", 0), len(accounts)),
               size=11, color=MUTED)
-    deck.footnote(slide, "Top six by sized potential shown per play; full list in the evidence "
+    deck.footnote(slide, "Top six by composite rank shown per play; full list in the evidence "
                          "workbook.")
     return slide
 
@@ -273,8 +281,8 @@ def slide_5_the_number(deck, potential, focus, coverage):
     slide = deck.slide("What the half is worth", "Q3 \u00b7 The number",
                        note="Copilot is sized on seats without Copilot today. GHAS is sized per "
                             "active committer because that is how it bills. GHE is Azure DevOps "
-                            "TAM available to migrate. AI credits already invoiced are existing "
-                            "revenue and are excluded from potential.")
+                            "seats available to migrate. These are volumes, not revenue \u2014 "
+                            "deliberately, since price per account is not yet negotiated.")
     accounts = focus.get("accounts", [])
     aiu = potential.get("aiuTotals", {})
 
@@ -288,10 +296,11 @@ def slide_5_the_number(deck, potential, focus, coverage):
                 quantities[product] += int(line.get("quantity") or 0)
 
     cards = [
-        ("Copilot seats", num(quantities["Copilot"]), money(values["Copilot"]),
+        ("Copilot seats", num(quantities["Copilot"]), "seats with no Copilot today",
          PLAY_COLOR["Innovate"]),
-        ("GHAS committers", num(quantities["GHAS"]), money(values["GHAS"]), PLAY_COLOR["Trust"]),
-        ("GHE seats", num(quantities["GHE"]), money(values["GHE"]), PLAY_COLOR["Scale"]),
+        ("GHAS committers", num(quantities["GHAS"]), "active committers not covered",
+         PLAY_COLOR["Trust"]),
+        ("GHE seats", num(quantities["GHE"]), "Azure DevOps seats to migrate", PLAY_COLOR["Scale"]),
         ("AI credits / yr", num(aiu.get("currentAnnualisedCredits")),
          "%s invoiced run-rate" % money(aiu.get("currentAnnualisedSpend")), ACCENT),
     ]
@@ -302,27 +311,27 @@ def slide_5_the_number(deck, potential, focus, coverage):
 
     rows = [
         ["Copilot", "Bucket 2", "Seats with no Copilot today", num(quantities["Copilot"]),
-         money(values["Copilot"])],
+         "seats"],
         ["GHAS", "Bucket 1", "Active committers L90d not covered", num(quantities["GHAS"]),
-         money(values["GHAS"])],
+         "committers"],
         ["GHE", "Bucket 1", "Azure DevOps seats available to migrate", num(quantities["GHE"]),
-         money(values["GHE"])],
+         "seats"],
         ["AI credits", "Bucket 2", "Accounts consuming credits today",
-         num(aiu.get("accountsConsumingAiu")), money(aiu.get("currentAnnualisedSpend")) + " run-rate"],
+         num(aiu.get("accountsConsumingAiu")),
+         money(aiu.get("currentAnnualisedSpend")) + " run-rate"],
     ]
     colors = {0: PLAY_COLOR["Innovate"], 1: PLAY_COLOR["Trust"],
               2: PLAY_COLOR["Scale"], 3: ACCENT}
     deck.table(slide, MARGIN, Inches(3.42), W - 2 * MARGIN,
-               ["Product", "Bucket", "Sizing basis", "Quantity", "Sized ARR"],
+               ["Product", "Bucket", "Sizing basis", "Quantity", "Unit"],
                [1.6, 1.3, 6.2, 1.6, 1.8], rows, row_h=0.46, size=11.5, colors=colors)
 
-    total = sum(values.values())
     deck.text(slide, MARGIN, Inches(5.66), W - 2 * MARGIN, Inches(0.62),
-              "Total sized potential across the focus set: %s. This is addressable, not "
-              "committed \u2014 the next slide shows how much of it the targets actually need."
-              % money(total), size=12.5, color=TEXT)
-    deck.footnote(slide, "Pricing is observed-first: where an account already buys a product its "
-                         "own billed rate is used; otherwise list price. GHE alone is derived.")
+              "This is the addressable volume in the focus set, counted in units we can verify "
+              "\u2014 seats, committers and invoiced credits. What the half needs against it is "
+              "on the next slide, in dated pipeline.", size=12.5, color=TEXT)
+    deck.footnote(slide, "Quantities are measured, not modelled: seats and committers come from "
+                         "product telemetry, credits from invoiced run-rate. No ARR is imputed.")
     return slide
 
 
@@ -337,15 +346,12 @@ def slide_6_coverage(deck, coverage, focus):
     b1 = buckets.get("Bucket 1") or {}
     uncovered = b1.get("uncoveredGap")
 
-    # The story is now told on dated pipeline, not on TAM. TAM coverage stays in the
-    # table as context, but a ratio built from an aspiration must never be the
-    # sentence leadership reads.
+    # Every column below is a dated, invoiceable number. Nothing modelled.
     if ghe_pipe is None or ghas_pipe is None:
-        narrative = ("Targets are not yet set for every product, so coverage reads TBD. Sized TAM "
-                     "is what the focus set can address, not what is committed - fill in "
-                     "targets.json and re-run to see the coverage gap per product.")
-        note = ("Three separate columns on purpose. Sized TAM is not commit. Targets are not yet "
-                "set for every product, so coverage reads TBD until targets.json is filled in.")
+        narrative = ("Targets are not yet set for every product, so coverage reads TBD. Fill in "
+                     "targets.json and re-run to see the uncovered gap per product.")
+        note = ("Every column here is dated pipeline against a set target - no modelled "
+                "potential. Coverage reads TBD wherever targets.json is not yet filled in.")
     else:
         narrative = ("GHAS is covered %.2fx by dated pipeline, so the H1 GHAS number is a "
                      "close-and-land problem, not a hunting problem. GHE is at %.2fx and is the "
@@ -353,20 +359,19 @@ def slide_6_coverage(deck, coverage, focus):
                      "from migration supply and new logos."
                      % (ghas_pipe, ghe_pipe,
                         money(uncovered) if uncovered is not None else "the balance"))
-        note = ("Read the live-pipeline column, not TAM. GHAS at %.2fx is already covered by "
+        note = ("GHAS at %.2fx is already covered by "
                 "dated deals, so protect it and close it. GHE at %.2fx is where the half is won "
                 "or lost - %s uncovered in Bucket 1. If asked what changes the number, the answer "
                 "is GHE migration supply, not more GHAS activity."
                 % (ghas_pipe, ghe_pipe,
                    money(uncovered) if uncovered is not None else "the balance"))
 
-    slide = deck.slide("Coverage: target vs live pipeline vs sized TAM",
+    slide = deck.slide("Coverage: target vs live, dated pipeline",
                        "Q3 \u00b7 Coverage math", note=note)
     rows, colors = [], {}
 
     for index, product in enumerate(coverage.get("products", []) or []):
         known = product.get("targetKnown")
-        tam_ratio = product.get("coverageRatio")
         pipe_ratio = product.get("pipelineCoverage")
         rows.append([
             product.get("product", ""),
@@ -374,16 +379,19 @@ def slide_6_coverage(deck, coverage, focus):
             money(product.get("h1Target")) if known else "TBD",
             money(product.get("livePipeline")),
             ("%.2fx" % pipe_ratio) if pipe_ratio is not None else "\u2014",
-            money(product.get("sizedPotential")),
-            ("%.2fx" % tam_ratio) if tam_ratio is not None else "\u2014",
+            (money(max(0.0, float(product.get("h1Target") or 0)
+                       - float(product.get("livePipeline") or 0)))
+             if (float(product.get("h1Target") or 0)
+                 - float(product.get("livePipeline") or 0)) > 0 else "Covered")
+            if known else "\u2014",
         ])
         # Colour on dated pipeline: that is the number that carries risk.
         colors[index] = ratio_color(pipe_ratio)
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Product", "Bucket", "H1 target", "Live H1 pipeline", "Pipeline cover",
-                "Sized TAM in focus set", "TAM cover"],
-               [1.5, 1.5, 1.5, 1.9, 1.5, 2.8, 1.3], rows, row_h=0.46, size=11.5,
+                "Uncovered"],
+               [1.8, 1.8, 1.9, 2.2, 1.8, 2.6], rows, row_h=0.46, size=11.5,
                colors=colors)
 
     top = float(BODY_TOP) + Inches(0.3) + Inches(0.46) * len(rows) + Inches(0.32)
@@ -455,7 +463,7 @@ def slide_7_how(deck, focus, report):
     x = MARGIN
     col_w = Inches(4.02)
     for play in PLAYS:
-        rows = sorted(by_play[play], key=lambda r: -float(r.get("potentialArr") or 0))
+        rows = sorted(by_play[play], key=lambda r: int(r.get("rank") or 999))
         color = PLAY_COLOR[play]
         q1 = [r for r in rows if (r.get("tier") or "").startswith(("Tier 1", "Tier 2"))][:4]
         q2 = [r for r in rows if r not in q1][:3]
@@ -464,8 +472,7 @@ def slide_7_how(deck, focus, report):
         deck.fill(slide, x, BODY_TOP, col_w, Inches(0.06), color)
         deck.text(slide, Emu(int(x + Inches(0.24))), Emu(int(BODY_TOP + Inches(0.24))),
                   Emu(int(col_w - Inches(0.48))), Inches(0.3),
-                  "%s \u00b7 %s" % (play.upper(), money(sum(float(r.get("potentialArr") or 0)
-                                                            for r in rows))),
+                  "%s \u00b7 %d accounts" % (play.upper(), len(rows)),
                   size=12, color=color, bold=True, space=True)
         deck.bullets(slide, Emu(int(x + Inches(0.24))), Emu(int(BODY_TOP + Inches(0.64))),
                      Emu(int(col_w - Inches(0.48))), motions[play], size=10.5, gap=0.1,
@@ -482,7 +489,7 @@ def slide_7_how(deck, focus, report):
                           Emu(int(col_w - Inches(1.4))), Inches(0.26),
                           truncate(account.get("name", ""), 26), size=10, color=TEXT)
                 deck.text(slide, Emu(int(x + col_w - Inches(1.16))), Emu(int(cursor)),
-                          Inches(0.92), Inches(0.26), money(account.get("potentialArr")),
+                          Inches(0.92), Inches(0.26), "#%d" % int(account.get("rank") or 0),
                           size=10, color=color, bold=True, align=PP_ALIGN.RIGHT)
                 cursor += Inches(0.26)
             cursor += Inches(0.12)
@@ -509,8 +516,9 @@ def slide_8_msft_partners(deck, focus, partners):
     cards = [
         ("Accounts with TPID", num(len(overlap)),
          "%s of focus set" % ("%.0f%%" % (100.0 * len(overlap) / max(1, len(accounts)))), ACCENT),
-        ("Potential under co-sell", money(sum(float(a.get("potentialArr") or 0) for a in overlap)),
-         "addressable with Microsoft", WHITE),
+        ("Pipeline under co-sell", money(sum(float(a.get("h1PipelineValue") or 0)
+                                              for a in overlap)),
+         "dated H1 deals with a TPID", WHITE),
         ("Accounts with a named partner", num(len(with_partner)),
          "existing partner relationship", PLAY_COLOR["Scale"]),
         ("Partner-led delivery need", num(len([a for a in overlap if a.get("play") == "Scale"])),
@@ -521,7 +529,7 @@ def slide_8_msft_partners(deck, focus, partners):
         deck.card(slide, x, BODY_TOP, Inches(2.95), Inches(1.42), label, value, sub, color)
         x += Inches(3.11)
 
-    top_overlap = sorted(overlap, key=lambda a: -float(a.get("potentialArr") or 0))[:7]
+    top_overlap = sorted(overlap, key=lambda a: int(a.get("rank") or 999))[:7]
     rows, colors = [], {}
     for index, account in enumerate(top_overlap):
         entry = partner_map.get(account.get("salesforceId"), {}) or {}
@@ -530,15 +538,15 @@ def slide_8_msft_partners(deck, focus, partners):
         rows.append([
             truncate(account.get("name", ""), 26),
             account.get("play", ""),
-            money(account.get("potentialArr")),
+            "#%d" % int(account.get("rank") or 0),
             (account.get("tpids") or [""])[0],
             truncate(", ".join(names) if names else "No partner mapped \u2014 needs sourcing", 46),
         ])
         colors[index] = PLAY_COLOR.get(account.get("play"), ACCENT)
 
     deck.table(slide, MARGIN, Inches(3.42), W - 2 * MARGIN,
-               ["Account", "Play", "Potential ARR", "Microsoft TPID", "Partner"],
-               [2.8, 1.3, 1.6, 2.0, 4.4], rows, row_h=0.36, size=10.5, colors=colors)
+               ["Account", "Play", "Rank", "Microsoft TPID", "Partner"],
+               [3.0, 1.5, 1.0, 2.2, 4.4], rows, row_h=0.36, size=10.5, colors=colors)
 
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.42),
               "How I use it: TPID accounts get a joint account-team introduction before any "
@@ -595,16 +603,17 @@ def slide_10_asks(deck, coverage, focus, learnings):
                else "the balance"))
     else:
         leadership.append(
-            "GHE target: not yet set. Sized GHE potential in the focus set is %s - I need the "
-            "number so I can tell you whether that is coverage or a supply gap."
-            % money(ghe.get("sizedPotential")))
+            "GHE target: not yet set. I have %s of dated GHE pipeline in the focus set - I "
+            "need the target so I can tell you whether that is coverage or a supply gap."
+            % money(ghe.get("livePipeline")))
 
     consumption = products.get("Consumption") or {}
     if not consumption.get("targetKnown"):
         leadership.append(
-            "Bucket 2 target: consumption target is still unset. I need the number to plan "
-            "against \u2014 sized consumption potential in the focus set is %s."
-            % money(consumption.get("sizedPotential")))
+            "Bucket 2 target: consumption target is still unset. I am carrying %s of dated "
+            "consumption pipeline and %s attained - I need the number to plan against."
+            % (money(consumption.get("livePipeline")),
+               money(bucket_of(coverage, "Bucket 2").get("attainedH1"))))
 
     ghas_pipe = ghas.get("pipelineCoverage")
     if ghas_pipe is not None and ghas_pipe >= 1:
@@ -615,10 +624,10 @@ def slide_10_asks(deck, coverage, focus, learnings):
             % (ghas_pipe, money(ghas.get("livePipeline"))))
     else:
         leadership.append(
-            "GHAS technical capacity: %d of %d focus accounts consume GHAS today against %s of "
-            "committer-based TAM. Converting that needs security-specialist time, not more "
+            "GHAS technical capacity: %d of %d focus accounts consume GHAS today, against %s "
+            "of dated GHAS pipeline. Converting that needs security-specialist time, not more "
             "pipeline." % (facts.get("consumingAccounts", {}).get("ghas", 0),
-                           facts.get("focusCount", 0), money(ghas.get("sizedPotential"))))
+                           facts.get("focusCount", 0), money(ghas.get("livePipeline"))))
 
     xfn = [
         "Partnerships: %d focus accounts carry a Microsoft TPID but only %d have a named "
@@ -640,14 +649,14 @@ def slide_10_asks(deck, coverage, focus, learnings):
                xfn, PLAY_COLOR["Scale"], size=11.5, gap=0.2, min_h=Inches(4.5))
 
     b1_gap = bucket_of(coverage, "Bucket 1").get("gap")
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
     commitment = (
         "Commitment: %s of Bucket 1 gap closed across H1, worked through %d focus accounts "
-        "carrying %s of sized potential." % (money(b1_gap), focus.get("selectedCount", 0),
-                                             money(focus.get("totals", {}).get("potentialArr")))
+        "with %s already in dated pipeline." % (money(b1_gap), focus.get("selectedCount", 0),
+                                                money(b1_pipe))
         if b1_gap else
-        "Commitment: %d focus accounts carrying %s of sized potential, worked to the plan on "
-        "the previous slides." % (focus.get("selectedCount", 0),
-                                  money(focus.get("totals", {}).get("potentialArr")))
+        "Commitment: %d focus accounts with %s in dated pipeline, worked to the plan on the "
+        "previous slides." % (focus.get("selectedCount", 0), money(b1_pipe))
     )
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.36),
               commitment, size=12.5, color=WHITE, bold=True)

@@ -86,6 +86,55 @@ def truncate(text, limit):
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
 
 
+# Average glyph advance as a fraction of point size. Two values because the two uses
+# pull in opposite directions, and verify_deck.py is the arbiter of both:
+#   FIT   - truncating to a width. Must be *wider* than the verifier's estimate, so
+#           anything we keep is comfortably inside the box.
+#   WRAP  - counting wrapped lines. Must be at least the verifier's estimate, so we
+#           never allocate fewer lines than it expects to render.
+CHAR_W_FIT = 0.46
+CHAR_W_WRAP = 0.50
+LINE_H_WRAP = 1.3
+
+
+def fit_chars(width_emu, size, spacing=0.0, char_w=CHAR_W_FIT):
+    """How many characters fit on one line in a box this wide."""
+    width_pt = float(width_emu) / 12700.0
+    per_char = size * char_w + spacing
+    return max(1, int(width_pt / per_char)) if per_char > 0 else 1
+
+
+def truncate_fit(text, width_emu, size, spacing=0.0):
+    """Truncate to the box width rather than to a guessed character count.
+
+    Character limits are the wrong unit for a proportional font: a column of digits and
+    a column of prose fit wildly different counts in the same inches.
+    """
+    return truncate(text, fit_chars(width_emu, size, spacing))
+
+
+def wrapped_lines(text, width_emu, size):
+    """Lines `text` will occupy when wrapped in a box this wide, breaking on words."""
+    chars = fit_chars(width_emu, size, char_w=CHAR_W_WRAP)
+    total = 0
+    for para in str(text or "").split("\n"):
+        words = para.split()
+        if not words:
+            total += 1
+            continue
+        line = 0
+        count = 1
+        for word in words:
+            need = len(word) if line == 0 else line + 1 + len(word)
+            if need <= chars:
+                line = need
+            else:
+                count += 1
+                line = len(word)
+        total += count
+    return max(1, total)
+
+
 # Tier labels are owned by rank.py and carry a descriptive suffix ("Tier 1 - Must win").
 # The deck matches on the "Tier N" prefix so renaming a tier there does not break rendering.
 def tier_names(focus):
@@ -206,33 +255,57 @@ class Deck:
                       Emu(int(w - Inches(0.4))), Inches(0.3), sub, size=9.5, color=MUTED)
 
     def table(self, slide, x, y, w, headers, widths, rows, row_h=0.285, size=9.5,
-              head_size=9, colors=None):
-        """Hand-drawn table. python-pptx native tables fight dark themes."""
+              head_size=9, colors=None, wrap=False):
+        """Hand-drawn table. python-pptx native tables fight dark themes.
+
+        `wrap=False` keeps every cell on one line and trims anything that will not fit
+        the column, which suits dense numeric tables. `wrap=True` wraps instead and
+        grows each row to its tallest cell, for tables carrying prose.
+        """
         total = float(sum(widths))
         cols = [w * (width / total) for width in widths]
         self.fill(slide, x, y, w, Inches(0.3), PANEL_2)
         cursor_x = float(x)
         for header, col_w in zip(headers, cols):
+            head_w = int(col_w - Inches(0.12))
             self.text(slide, Emu(int(cursor_x + Inches(0.1))), Emu(int(y + Inches(0.055))),
-                      Emu(int(col_w - Inches(0.12))), Inches(0.22), header.upper(),
+                      Emu(head_w), Inches(0.22),
+                      truncate_fit(header.upper(), head_w, head_size, spacing=1.2),
                       size=head_size, color=MUTED, bold=True, space=True, wrap=False)
             cursor_x += col_w
         cursor_y = float(y) + Inches(0.3)
+        line_h = Inches(size * LINE_H_WRAP / 72.0)
+        pad = Inches(0.09)
         for index, row in enumerate(rows):
+            cell_ws = [int(col_w - Inches(0.12)) for col_w in cols]
+            if wrap:
+                lines = max(wrapped_lines(cell, cw, size)
+                            for cell, cw in zip(row, cell_ws))
+                height = max(Inches(row_h), line_h * lines + pad * 2)
+            else:
+                height = Inches(row_h)
             if index % 2 == 0:
-                self.fill(slide, x, Emu(int(cursor_y)), w, Inches(row_h), PANEL)
+                self.fill(slide, x, Emu(int(cursor_y)), w, Emu(int(height)), PANEL)
             cursor_x = float(x)
             row_color = (colors or {}).get(index)
             for cell_index, (cell, col_w) in enumerate(zip(row, cols)):
                 color = row_color if (row_color and cell_index == 0) else TEXT
+                cell_w = cell_ws[cell_index]
+                if wrap:
+                    value = str(cell)
+                    cell_h = line_h * wrapped_lines(cell, cell_w, size)
+                    offset = pad
+                else:
+                    value = truncate_fit(str(cell), cell_w, size)
+                    cell_h = Inches(row_h)
+                    offset = Inches(row_h * 0.16)
                 self.text(slide, Emu(int(cursor_x + Inches(0.1))),
-                          Emu(int(cursor_y + Inches(row_h * 0.16))),
-                          Emu(int(col_w - Inches(0.12))), Inches(row_h),
-                          str(cell), size=size,
-                          color=color if cell_index == 0 else color,
-                          bold=cell_index == 0, wrap=False)
+                          Emu(int(cursor_y + offset)),
+                          Emu(cell_w), Emu(int(cell_h)),
+                          value, size=size, color=color,
+                          bold=cell_index == 0, wrap=wrap)
                 cursor_x += col_w
-            cursor_y += Inches(row_h)
+            cursor_y += float(height)
         return Emu(int(cursor_y))
 
     def bullet_height(self, w, items, size=13, gap=0.16):

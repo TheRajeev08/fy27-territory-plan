@@ -76,12 +76,10 @@ def build(focus, coverage, crm):
         },
         {
             "headline": "GHAS is a story we told, not a motion we ran",
-            "detail": "Only {ghas} of {total} focus accounts consume GHAS today, against "
-                      "{tam} of sized committer-based potential. The H2 gap was motion, not "
-                      "opportunity - and it is now closing: {pipe} of GHAS is close-dated in "
-                      "H1, {ratio}x the H1 GHAS target.".format(
+            "detail": "Only {ghas} of {total} focus accounts consume GHAS today. The H2 gap "
+                      "was motion, not opportunity - and it is now closing: {pipe} of GHAS is "
+                      "close-dated in H1, {ratio}x the H1 GHAS target.".format(
                           ghas=ghas_accounts, total=total,
-                          tam=money(ghas.get("sizedPotential")),
                           pipe=money(ghas.get("livePipeline")),
                           ratio=ghas.get("pipelineCoverage") or 0),
             "carryForward": "Run GHAS as a named-account motion on the {n} accounts with "
@@ -92,11 +90,9 @@ def build(focus, coverage, crm):
         {
             "headline": "GHE net-new needs supply, not just conversion",
             "detail": "GHE has {pipe} close-dated against a {target} H1 target - {ratio}x on "
-                      "live pipeline. Sized potential of {sized} is TAM, not plan; the existing "
-                      "book does not contain enough GHE to make the number on conversion "
-                      "alone.".format(
+                      "live pipeline. The existing book does not contain enough GHE to make the "
+                      "number on conversion alone; it needs new supply.".format(
                           pipe=money(ghe.get("livePipeline")),
-                          sized=money(ghe.get("sizedPotential")),
                           target=money(ghe.get("h1Target")),
                           ratio=ghe.get("pipelineCoverage") or 0),
             "carryForward": "Add migration and new-logo supply early in Q1 rather than "
@@ -220,6 +216,57 @@ def build(focus, coverage, crm):
     }
 
 
+def apply_seller_learnings(out, overrides, tokens):
+    """Fold seller-supplied learnings into the computed set.
+
+    A learning the seller brings is a fact the systems cannot hold - "we lost that
+    deal because they would not engage below the exec line" is nowhere in Salesforce.
+    Two rules keep it honest:
+
+      * `replaces` substitutes a computed learning instead of sitting beside it, so
+        the slide never argues the same point twice in two voices.
+      * `detail` and `carryForward` may reference the computed tokens below, so a
+        seller narrative still carries a number that traces back to the run data.
+
+    An entry whose `replaces` matches nothing is fatal, for the same reason an
+    unmatched account override is.
+    """
+    entries = (overrides or {}).get("learnings") or []
+    if not entries:
+        return
+    learnings = out["learnings"]
+    for entry in entries:
+        item = {
+            "headline": fill_tokens(entry.get("headline", ""), tokens),
+            "detail": fill_tokens(entry.get("detail", ""), tokens),
+            "carryForward": fill_tokens(entry.get("carryForward", ""), tokens),
+            "evidence": entry.get("evidence") or "overrides.json (seller-supplied)",
+            "source": "seller",
+        }
+        target = entry.get("replaces")
+        if target:
+            matches = [i for i, existing in enumerate(learnings)
+                       if existing.get("headline", "").startswith(target)]
+            if not matches:
+                raise SystemExit(
+                    "overrides.json: learning replaces %r but no computed learning has "
+                    "that headline prefix. Computed headlines are: %s"
+                    % (target, "; ".join(l.get("headline", "") for l in learnings)))
+            learnings[matches[0]] = item
+        else:
+            learnings.append(item)
+
+
+def fill_tokens(text, tokens):
+    for key, value in tokens.items():
+        text = text.replace("{%s}" % key, str(value))
+    if "{" in text and "}" in text:
+        raise SystemExit(
+            "overrides.json: unresolved token in %r. Available tokens: %s"
+            % (text, ", ".join(sorted(tokens))))
+    return text
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("usage: learnings.py <runDir>")
@@ -232,6 +279,19 @@ def main():
         raise SystemExit("Cannot read focus-accounts.json")
 
     out = build(focus, coverage or {}, crm or {})
+
+    by_product = {p["product"]: p for p in (coverage or {}).get("products", []) or []}
+    ghas = by_product.get("GHAS", {})
+    consuming = (out.get("facts", {}) or {}).get("consumingAccounts", {}) or {}
+    tokens = {
+        "focusTotal": len(focus.get("accounts", []) or []),
+        "ghasAccounts": consuming.get("ghas", 0),
+        "ghasPipeline": money(ghas.get("livePipeline")),
+        "ghasCoverage": ghas.get("pipelineCoverage") or 0,
+    }
+    overrides = load(os.path.join(run_dir, "overrides.json"), {}) or {}
+    apply_seller_learnings(out, overrides, tokens)
+
     dest = os.path.join(run_dir, "learnings.json")
     with open(dest, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)

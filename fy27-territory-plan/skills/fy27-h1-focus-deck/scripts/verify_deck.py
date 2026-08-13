@@ -26,6 +26,12 @@ from pptx.util import Emu
 CHAR_W = 0.50
 LINE_H = 1.22
 
+# Advance width used for the *width* check. Deliberately smaller than CHAR_W: over-
+# estimating height only costs a spurious warning, but over-estimating width would
+# flag boxes that render fine, and a verifier that cries wolf stops being read.
+CHAR_W_TIGHT = 0.42
+WIDTH_TOLERANCE = 1.02
+
 
 def shape_text(shape):
     if not shape.has_text_frame:
@@ -40,6 +46,36 @@ def font_size(shape, default=12.0):
             if run.font.size is not None:
                 sizes.append(run.font.size.pt)
     return max(sizes) if sizes else default
+
+
+def letter_spacing(shape):
+    """Extra advance per character, in points, from the `spc` run property."""
+    for para in shape.text_frame.paragraphs:
+        for run in para.runs:
+            spc = run.font._rPr.get("spc")
+            if spc:
+                return float(spc) / 100.0
+    return 0.0
+
+
+def needed_width(shape):
+    """Estimated rendered width in EMU for text that will not wrap.
+
+    Only meaningful when word_wrap is False. Such text renders on one line and spills
+    sideways out of its box, so a height check can never catch it - which is exactly
+    how 13 clipped cells shipped on slide 2. Returns 0 when the check does not apply.
+    """
+    if not shape.has_text_frame or shape.text_frame.word_wrap is not False:
+        return 0
+    text = shape_text(shape)
+    if not text.strip():
+        return 0
+    size = font_size(shape)
+    spacing = letter_spacing(shape)
+    widest = 0.0
+    for line in text.split("\n"):
+        widest = max(widest, len(line) * (size * CHAR_W_TIGHT + spacing))
+    return int(widest / 72.0 * 914400)
 
 
 def needed_height(shape):
@@ -95,6 +131,11 @@ def check_geometry(path):
             if need and need > shape.height * 1.06:
                 overflows.append((index, "text %.2fin > box %.2fin"
                                   % (Emu(need).inches, Emu(shape.height).inches),
+                                  shape.shape_type, shape_text(shape)[:60]))
+            wide = needed_width(shape)
+            if wide and wide > shape.width * WIDTH_TOLERANCE:
+                overflows.append((index, "clipped %.2fin wide > box %.2fin"
+                                  % (Emu(wide).inches, Emu(shape.width).inches),
                                   shape.shape_type, shape_text(shape)[:60]))
             if shape.has_text_frame and shape_text(shape).strip():
                 boxes.append((box, shape_text(shape)[:40]))

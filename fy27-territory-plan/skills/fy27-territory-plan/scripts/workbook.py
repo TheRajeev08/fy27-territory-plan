@@ -67,6 +67,64 @@ def date_value(v):
             return value
     return value
 
+COPILOT_TRUST_RATIO = 0.50
+
+
+def classify_play(ghe, copilot, ghas, regulated=None):
+    """Assign the FY27 play from what the account owns today.
+
+    The rule the ladder encodes, and why each rung is where it is:
+
+      * No GitHub Enterprise -> **Scale**. Scale is the migration and displacement
+        play; an account that is not on the platform is exactly its target. (The
+        previous engine scored *existing* GHE seats as a Scale signal, which pushed
+        established customers into a migration motion and left greenfield accounts
+        out of it.)
+      * On GHE with Copilot at or above half the GHE licence count -> **Trust**.
+        Agentic delivery has landed at scale, so the next conversation is governance,
+        security and quality over that volume of generated code.
+      * On GHE with Copilot below half -> **Innovate**. The agentic motion is started
+        but not saturated, and the headroom is the opportunity.
+      * On GHE with GHAS but no Copilot -> **Trust**. Security has already landed;
+        build on it.
+      * On GHE with neither, in a regulated industry -> **Trust**. Regulation makes
+        the security and governance conversation the one that opens the door.
+      * On GHE with neither, otherwise -> **Innovate**.
+
+    `regulated` is None when industry is not yet known; the caller refines those
+    accounts once Salesforce data is available. The default keeps the account inside
+    the play set either way, so ranking is never gated on enrichment that may be
+    missing.
+    """
+    if ghe <= 0:
+        return "Scale"
+    if copilot > 0:
+        return "Trust" if copilot >= ghe * COPILOT_TRUST_RATIO else "Innovate"
+    if ghas > 0:
+        return "Trust"
+    return "Trust" if regulated else "Innovate"
+
+
+def play_reason(ghe, copilot, ghas, regulated=None, industry=""):
+    """One line explaining the play, so the workbook can show its working."""
+    if ghe <= 0:
+        return "Not on GitHub Enterprise - migration and displacement motion."
+    if copilot > 0:
+        share = copilot / ghe if ghe else 0
+        if copilot >= ghe * COPILOT_TRUST_RATIO:
+            return ("Copilot at %.0f%% of %.0f GHE licences - agentic delivery at scale, "
+                    "govern it." % (share * 100, ghe))
+        return ("Copilot at %.0f%% of %.0f GHE licences - agentic headroom remains."
+                % (share * 100, ghe))
+    if ghas > 0:
+        return "On GHE with %.0f GHAS seats - security landed, build on it." % ghas
+    if regulated:
+        return "On GHE, no Copilot or GHAS, regulated industry (%s)." % (industry or "regulated")
+    if regulated is None:
+        return "On GHE, no Copilot or GHAS - industry not yet known, defaulted to Innovate."
+    return "On GHE, no Copilot or GHAS, unregulated industry (%s)." % (industry or "unknown")
+
+
 def guidance(play):
     return {
         "Innovate": "Lead with an agentic-engineering outcome: start with a focused Copilot cohort, establish champions, and measure velocity, capacity, quality, and governance. Expand from IDE assistance into Copilot coding, review, CLI, cloud-agent, and repeatable agentic workflows.",
@@ -312,12 +370,23 @@ def analyze(rows, source_name, activity=None, contacts=None):
             scores["Scale"] = min(3, 1 + int(ado > 0 or gha > 0))
             evidence.append(f"Scale signal: {ghe:.0f} GHE/VS seats, {committers:.0f} active committers L90d, ADO TAM {ado:.0f}, GHAzDO {gha:.0f}")
         else: gaps.append("Platform consolidation, incumbent tools, and renewal pressure require discovery")
-        plays = sorted(scores, key=lambda p: (-scores[p], p))
-        classified = bool(plays)
-        if not classified: plays = ["Unclassified"]; scores["Unclassified"] = 0
-        primary = plays[0]
-        readiness = round(min(100, scores[primary] / 3 * 80 + min(20, len(evidence) * 7)), 2) if classified else None
-        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "score": scores[primary], "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe, "copilotSeats": cf}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
+        # The play itself is decided by the ladder in classify_play, not by these
+        # scores. The scores stay because they still drive execution readiness and the
+        # evidence strings, but they are a measure of how much we know about an
+        # account, not of which motion it belongs in.
+        classified = bool(scores) or ghe > 0 or cf > 0 or ghas > 0
+        if classified:
+            primary = classify_play(ghe, cf, ghas)
+            play_basis = play_reason(ghe, cf, ghas)
+            plays = [primary] + [p for p in sorted(scores, key=lambda p: (-scores[p], p))
+                                 if p != primary]
+        else:
+            primary = "Unclassified"
+            plays = ["Unclassified"]
+            scores["Unclassified"] = 0
+            play_basis = "No GHE, Copilot or GHAS signal in the upload."
+        readiness = round(min(100, scores.get(primary, 0) / 3 * 80 + min(20, len(evidence) * 7)), 2) if classified else None
+        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "playBasis": play_basis, "playPendingIndustry": bool(ghe > 0 and cf <= 0 and ghas <= 0), "score": scores.get(primary, 0), "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe, "copilotSeats": cf}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
     accounts.sort(key=lambda a: (-a["score"], -len(a["plays"]), a["name"].lower()))
     for account in accounts:
         components = account["revenueSignals"]
