@@ -16,6 +16,8 @@ Then quit and reopen the Copilot app, and ask:
 
 > Build my FY27 territory plan
 
+**New to this? Start with the [step-by-step teammate guide](GUIDE.md).**
+
 The plugin itself lives in [`fy27-territory-plan/`](fy27-territory-plan/) — this repo is the
 bundle directory the plugin loader scans. See that folder's README for requirements, the
 trust model and what the workbook contains.
