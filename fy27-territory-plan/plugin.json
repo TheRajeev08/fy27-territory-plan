@@ -1,0 +1,27 @@
+{
+  "name": "fy27-territory-plan",
+  "description": "Build an FY27 GitHub territory plan from a SuperDash export, classified into the Innovate, Trust, and Scale revenue plays and enriched live from Salesforce and Gong using the invoking teammate's own credentials. Renders an interactive app and exports an Excel workbook.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Rajeev Ranjan",
+    "email": "TheRajeev08@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "territory-plan",
+    "book-of-business",
+    "superdash",
+    "innovate",
+    "trust",
+    "scale",
+    "salesforce",
+    "gong",
+    "copilot",
+    "ghas"
+  ],
+  "category": "planning",
+  "skills": [
+    "./skills/fy27-territory-plan",
+    "./skills/fy27-crm-enrichment"
+  ]
+}
