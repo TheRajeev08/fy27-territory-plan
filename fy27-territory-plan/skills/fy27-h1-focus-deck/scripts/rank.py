@@ -44,6 +44,60 @@ W_STAGE1 = {"potential": 0.65, "communication": 0.35}
 # opportunity is demonstrably in-motion, which is a stronger claim than sizing alone.
 W_STAGE2 = {"potential": 0.40, "pipeline": 0.20, "communication": 0.20, "trigger": 0.20}
 
+# Each FY27 play carries a *priority* clause that is separate from its membership rule:
+# within Scale, prefer accounts that already carry Copilot or Teams seats; within
+# Innovate, prefer the larger GHE bases, because that is where the Copilot headroom is;
+# within Trust, prefer the deeper Copilot attach, because that is how much generated
+# code there is to govern.
+#
+# These are tie-breaks, not ranking signals. The deck states that accounts are ranked on
+# potential, live pipeline, communication and triggers, and that claim has to stay true,
+# so the lift is capped at PLAY_PRIORITY_WEIGHT of a 0-100 composite - small enough that
+# it can only reorder accounts that were already close, never lift a cold account over a
+# live deal. The signal is normalised *within* each play cohort, so an Innovate account
+# competes on GHE size against other Innovate accounts rather than against the book.
+PLAY_PRIORITY_WEIGHT = 0.05
+
+
+def play_priority_signal(row):
+    """The raw per-play priority quantity for one account, before normalising."""
+    signals = row.get("revenueSignals", {}) or {}
+    ghe = float(signals.get("gheSeats") or 0)
+    copilot = float(signals.get("copilotSeats") or 0)
+    teams = float(signals.get("teamsSeats") or 0)
+    play = row.get("play", "")
+    if play == "Scale":
+        return copilot + teams
+    if play == "Innovate":
+        return ghe
+    if play == "Trust":
+        return (copilot / ghe) if ghe > 0 else 0.0
+    return 0.0
+
+
+def play_priority_reason(row):
+    """One line naming why an account sorts where it does inside its play."""
+    signals = row.get("revenueSignals", {}) or {}
+    ghe = float(signals.get("gheSeats") or 0)
+    copilot = float(signals.get("copilotSeats") or 0)
+    teams = float(signals.get("teamsSeats") or 0)
+    play = row.get("play", "")
+    if play == "Scale":
+        if copilot + teams <= 0:
+            return "No existing GitHub seats - net-new migration conversation."
+        return ("Already carries %.0f Copilot and %.0f Teams seats - a GitHub "
+                "relationship exists to build the platform case on." % (copilot, teams))
+    if play == "Innovate":
+        if ghe <= 0:
+            return "No GHE base sized."
+        return "%.0f GHE licences with %.0f Copilot - the headroom is the opportunity." % (ghe, copilot)
+    if play == "Trust":
+        if ghe <= 0:
+            return "Seller-asserted Trust account."
+        return ("Copilot at %.0f%% of %.0f GHE licences - that is the volume of "
+                "generated code to govern." % (copilot / ghe * 100, ghe))
+    return ""
+
 # A trigger is worth more when it implies budget or urgency. These weights are applied
 # to the trigger's type; recency then decays it.
 TRIGGER_TYPE_WEIGHT = {
@@ -145,6 +199,7 @@ def collect(report, potential, crm=None, ov=None, as_of=None):
             "name": account.get("name", ""),
             "play": account.get("primaryPlay", ""),
             "plays": account.get("plays", []),
+            "revenueSignals": account.get("revenueSignals", {}) or {},
             "potentialArr": float(entry.get("potentialArr") or 0),
             "lines": entry.get("lines", []),
             "aiu": entry.get("aiu", {}),
@@ -181,6 +236,15 @@ def score_rows(rows, weights, triggers_by_key=None):
         r["key"]: r.get("h1PipelineValue", 0.0) * max(r.get("bestStageWeight", 0.0), 0.3)
         for r in rows
     })
+    # Play priority is normalised inside each play, not across the book, so an Innovate
+    # account is compared on GHE size against other Innovate accounts. Normalising
+    # globally would let one play's units (seat counts) dominate another's (attach
+    # ratios) and turn a tie-break into a ranking signal.
+    prio = {}
+    for play in PLAYS:
+        cohort = [r for r in rows if r.get("play") == play]
+        if cohort:
+            prio.update(normalise({r["key"]: play_priority_signal(r) for r in cohort}))
     for row in rows:
         row["potentialScore"] = round(pot.get(row["key"], 0.0), 1)
         row["commScore"] = round(comm.get(row["key"], 0.0), 1)
@@ -194,6 +258,9 @@ def score_rows(rows, weights, triggers_by_key=None):
             row["triggerScore"] = round(best, 1)
             row["triggers"] = kept
             composite += weights["trigger"] * best
+        row["playPriorityScore"] = round(prio.get(row["key"], 0.0), 1)
+        row["playPriorityReason"] = play_priority_reason(row)
+        composite += PLAY_PRIORITY_WEIGHT * row["playPriorityScore"]
         row["compositeScore"] = round(composite, 1)
     rows.sort(key=lambda r: (-r["compositeScore"], -r["potentialArr"], r["name"]))
     for i, row in enumerate(rows, 1):

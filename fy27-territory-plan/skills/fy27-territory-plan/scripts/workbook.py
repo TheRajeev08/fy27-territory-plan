@@ -67,10 +67,10 @@ def date_value(v):
             return value
     return value
 
-COPILOT_TRUST_RATIO = 0.50
+COPILOT_TRUST_RATIO = 0.25
 
 
-def classify_play(ghe, copilot, ghas, regulated=None):
+def classify_play(ghe, copilot, ghas=0, regulated=None):
     """Assign the FY27 play from what the account owns today.
 
     The rule the ladder encodes, and why each rung is where it is:
@@ -81,18 +81,27 @@ def classify_play(ghe, copilot, ghas, regulated=None):
         established customers into a migration motion and left greenfield accounts
         out of it.) `ghe` here must be **true GitHub Enterprise seats** - licence
         seats plus metered users. The SuperDash "GHE/VS" total also counts Visual
-        Studio bundle seats, which entitle GHE without the customer being on it;
+        Studio bundle seats, which entitle GHE but do not mean the customer is on it;
         feeding that blended figure in here misreads pure-VS accounts as customers.
-      * On GHE with Copilot at or above half the GHE licence count -> **Trust**.
-        Agentic delivery has landed at scale, so the next conversation is governance,
-        security and quality over that volume of generated code.
-      * On GHE with Copilot below half -> **Innovate**. The agentic motion is started
-        but not saturated, and the headroom is the opportunity.
-      * On GHE with GHAS but no Copilot -> **Trust**. Security has already landed;
-        build on it.
-      * On GHE with neither, in a regulated industry -> **Trust**. Regulation makes
-        the security and governance conversation the one that opens the door.
-      * On GHE with neither, otherwise -> **Innovate**.
+      * On GHE with Copilot at or above a quarter of the GHE licence count ->
+        **Trust**. Agentic delivery has landed at meaningful scale, so the next
+        conversation is governance, security and quality over that generated code.
+      * On GHE, below that bar, in a regulated industry -> **Trust**. This is Trust's
+        second tier: regulation makes the security and governance conversation the one
+        that opens the door even before Copilot has landed. It exists because attach
+        alone qualifies too few accounts to carry the play.
+      * On GHE, below the bar, unregulated -> **Innovate**. The agentic motion is
+        either unstarted or far from saturated, and that headroom is the opportunity.
+
+    The 25% bar is cut at the natural break in the book: accounts with any Copilot
+    cluster either at 28% and above or at 9% and below, with nothing in between. An
+    account running 10 Copilot seats against 330 GHE licences is a headroom story, not
+    a govern-at-scale story, and belongs in Innovate.
+
+    `ghas` is accepted for call-site compatibility but no longer decides membership.
+    GHAS used to promote an account to Trust on its own; Copilot is now the sole
+    product signal for Trust, so a GHAS customer without Copilot is an Innovate
+    account whose security footprint is an asset in the conversation, not a play.
 
     `regulated` is None when industry is not yet known; the caller refines those
     accounts once Salesforce data is available. The default keeps the account inside
@@ -101,31 +110,27 @@ def classify_play(ghe, copilot, ghas, regulated=None):
     """
     if ghe <= 0:
         return "Scale"
-    if copilot > 0:
-        return "Trust" if copilot >= ghe * COPILOT_TRUST_RATIO else "Innovate"
-    if ghas > 0:
+    if copilot >= ghe * COPILOT_TRUST_RATIO:
         return "Trust"
     return "Trust" if regulated else "Innovate"
 
 
-def play_reason(ghe, copilot, ghas, regulated=None, industry=""):
+def play_reason(ghe, copilot, ghas=0, regulated=None, industry=""):
     """One line explaining the play, so the workbook can show its working."""
     if ghe <= 0:
         return "Not on GitHub Enterprise - migration and displacement motion."
-    if copilot > 0:
-        share = copilot / ghe if ghe else 0
-        if copilot >= ghe * COPILOT_TRUST_RATIO:
-            return ("Copilot at %.0f%% of %.0f GHE licences - agentic delivery at scale, "
-                    "govern it." % (share * 100, ghe))
-        return ("Copilot at %.0f%% of %.0f GHE licences - agentic headroom remains."
-                % (share * 100, ghe))
-    if ghas > 0:
-        return "On GHE with %.0f GHAS seats - security landed, build on it." % ghas
+    share = (copilot / ghe * 100) if ghe else 0
+    if copilot >= ghe * COPILOT_TRUST_RATIO:
+        return ("Copilot at %.0f%% of %.0f GHE licences - agentic delivery at scale, "
+                "govern it." % (share, ghe))
     if regulated:
-        return "On GHE, no Copilot or GHAS, regulated industry (%s)." % (industry or "regulated")
+        return ("On GHE, Copilot at %.0f%% of %.0f licences, regulated industry (%s) - "
+                "governance opens the door." % (share, ghe, industry or "regulated"))
     if regulated is None:
-        return "On GHE, no Copilot or GHAS - industry not yet known, defaulted to Innovate."
-    return "On GHE, no Copilot or GHAS, unregulated industry (%s)." % (industry or "unknown")
+        return ("Copilot at %.0f%% of %.0f GHE licences - industry not yet known, "
+                "defaulted to Innovate." % (share, ghe))
+    return ("Copilot at %.0f%% of %.0f GHE licences - agentic headroom remains (%s)."
+            % (share, ghe, industry or "unregulated"))
 
 
 def guidance(play):
@@ -361,8 +366,9 @@ def analyze(rows, source_name, activity=None, contacts=None):
         committers = total("Active Committers L90d (Cloud Users)")
         ghas = total("GHAS total volume and metered")
         gha = total("GHAzDO Seats")
+        teams = total("# Teams seats")
         ado = total("ADO TAM - GHAzDO Accts Only")
-        consumption = f"GHE {ghe_true:.0f} + VS bundle {vs_bundle:.0f}; CfB {cf:.0f}; UBB {ubb:.0f} (prior {last_ubb:.0f}); committers L90d {committers:.0f}; GHAS {ghas:.0f}; GHAzDO {gha:.0f}; ADO TAM {ado:.0f}; LM consumption ${total('LM Consumption $'):.0f}"
+        consumption = f"GHE {ghe_true:.0f} + VS bundle {vs_bundle:.0f}; CfB {cf:.0f}; Teams {teams:.0f}; UBB {ubb:.0f} (prior {last_ubb:.0f}); committers L90d {committers:.0f}; GHAS {ghas:.0f}; GHAzDO {gha:.0f}; ADO TAM {ado:.0f}; LM consumption ${total('LM Consumption $'):.0f}"
         evidence, gaps, scores = [], [], {}
         if cf > 0 or ubb > 0 or last_ubb > 0:
             scores["Innovate"] = min(3, 1 + int(last_ubb > 0) + int(ubb > last_ubb or total("GHE/VS to CfB Potential") > 0))
@@ -398,7 +404,7 @@ def analyze(rows, source_name, activity=None, contacts=None):
             scores["Unclassified"] = 0
             play_basis = "No GHE, Copilot or GHAS signal in the upload."
         readiness = round(min(100, scores.get(primary, 0) / 3 * 80 + min(20, len(evidence) * 7)), 2) if classified else None
-        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "playBasis": play_basis, "playPendingIndustry": bool(ghe_true > 0 and cf <= 0 and ghas <= 0), "score": scores.get(primary, 0), "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe_true - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe_true, "vsBundleSeats": vs_bundle, "copilotSeats": cf}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
+        accounts.append({"name": name, "salesforceId": sid, "primaryPlay": primary, "plays": plays, "playBasis": play_basis, "playPendingIndustry": bool(ghe_true > 0 and cf < ghe_true * COPILOT_TRUST_RATIO), "score": scores.get(primary, 0), "classified": classified, "renewal": renewal, "renewalConflict": renewal_conflict, "sourceRows": len(rows_for_account), "consumption": consumption, "evidence": evidence, "discoveryGaps": gaps, "winPlan": " ".join(guidance(p) for p in plays[:2]), "nextAction": next_action(primary), "dashboards": dashboards(primary, sid), "executionReadiness": readiness, "executionReason": ("Play evidence strength and observed product signals; buying intent still requires seller validation." if classified else "Not scored: no product or usage signal qualified this account for a play."), "revenueSignals": {"copilotWhitespace": total("GHE/VS to CfB Potential"), "adoWhitespace": ado, "securityWhitespace": max(ghe_true - ghas, 0), "meteredConsumption": total("LM Consumption $"), "activeCommitters": committers, "ghasSeats": ghas, "gheSeats": ghe_true, "vsBundleSeats": vs_bundle, "copilotSeats": cf, "teamsSeats": teams, "ghazdoSeats": gha}, "activity": {"status": "not enriched", "total": 0, "inbound": 0, "outbound": 0, "meetings": 0, "lastActivity": "", "twoWay": False, "score": 0, "tier": "Unranked", "reason": "Salesforce activity has not been enriched."}, "contacts": []})
     accounts.sort(key=lambda a: (-a["score"], -len(a["plays"]), a["name"].lower()))
     for account in accounts:
         components = account["revenueSignals"]
@@ -471,21 +477,21 @@ def analyze(rows, source_name, activity=None, contacts=None):
 PLAY_GUIDANCE = {
     "Innovate": {
         "objective": "Turn developer AI readiness into measurable engineering velocity, quality, and capacity outcomes.",
-        "fit": "Accounts with Copilot/CfB or UBB signals, Copilot whitespace, or evidence of agentic engineering readiness.",
+        "fit": "On GitHub Enterprise with Copilot below a quarter of the licence base, in an unregulated industry - the agentic headroom is the opportunity. GHAS or security footprint is an asset in the conversation, not a reason to leave the play.",
         "motion": "Start with a focused cohort and executive sponsor; baseline outcomes, activate champions, prove value, then expand into repeatable agentic workflows.",
         "actions": "Confirm cohort and sponsor; baseline velocity, capacity, quality, and governance; run a focused adoption workshop; review outcomes and scale.",
         "exit": "Named sponsor, defined cohort, baseline measures, pilot decision date, and expansion hypothesis.",
     },
     "Trust": {
         "objective": "Reduce software supply-chain, code-security, and quality risk while simplifying governance.",
-        "fit": "Accounts with GHAS, secret-risk, code-quality, security, or application-governance signals and relevant whitespace.",
+        "fit": "On GitHub Enterprise with Copilot at or above a quarter of the licence base - enough generated code to govern. Second tier: on GHE in a regulated industry, where compliance opens the door before Copilot has landed.",
         "motion": "Connect risk signals to engineering outcomes, agree measurable controls, and build a partner-supported path from assessment to adoption.",
         "actions": "Validate the highest-cost risk; map current controls; agree success measures; run a technical workshop; identify evaluation owner and rollout path.",
         "exit": "Documented risk, agreed success measures, technical workshop, evaluation owner, and dated next step.",
     },
     "Scale": {
         "objective": "Consolidate the developer platform and scale GitHub adoption across teams, repositories, and workflows.",
-        "fit": "Accounts with meaningful GHE/VS seats, active committers, ADO/GHAzDO signals, platform fragmentation, or migration potential.",
+        "fit": "Not on GitHub Enterprise - the migration and displacement target. Priority to accounts already carrying Copilot or Teams seats, where a GitHub relationship already exists to build the platform case on.",
         "motion": "Build the consolidation case, inventory incumbents, design governance, execute in waves, and prove adoption economics with the first cohort.",
         "actions": "Map platform fragmentation and renewal pressure; quantify migration scope; identify a first wave; align platform and procurement leaders; establish review date.",
         "exit": "Incumbent inventory, economic hypothesis, migration cohort, governance owner, and executive review date.",

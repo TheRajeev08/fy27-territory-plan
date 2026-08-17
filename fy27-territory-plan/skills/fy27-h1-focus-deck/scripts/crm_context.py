@@ -230,7 +230,10 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
             rec["openPipeline"] = kept
             removed = sum(float(o.get("amount") or 0) for o in dropped if o.get("inH1")
                           and not o.get("isRenewal"))
+            removed_q1 = sum(float(o.get("amount") or 0) for o in dropped if o.get("inQ1")
+                             and not o.get("isRenewal"))
             rec["h1PipelineValue"] = max(0.0, rec.get("h1PipelineValue", 0.0) - removed)
+            rec["q1PipelineValue"] = max(0.0, rec.get("q1PipelineValue", 0.0) - removed_q1)
             rec["suppressedOpportunities"] = rec.get("suppressedOpportunities", []) + [
                 {"name": o.get("name"), "amount": o.get("amount")} for o in dropped]
             # bestStage may have come from a dropped opportunity, so recompute it.
@@ -253,6 +256,8 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
         rec["openPipeline"].extend(entries)
         added = sum(e["amount"] for e in entries)
         rec["h1PipelineValue"] += added
+        rec["q1PipelineValue"] = rec.get("q1PipelineValue", 0.0) + sum(
+            e["amount"] for e in entries if e.get("inQ1"))
         rec["sellerPipelineValue"] = rec.get("sellerPipelineValue", 0.0) + added
         for entry in entries:
             weight = stage_weight(entry["stage"])
@@ -273,7 +278,7 @@ def norm_name(value):
 
 
 def ingest(raw, as_of, ov=None, rates=None):
-    _, h1_start, h1_end, _ = fiscal_h1(as_of)
+    _, h1_start, h1_end, q1_end = fiscal_h1(as_of)
     accounts = {}
 
     for row in rows_of(raw.get("accounts")):
@@ -292,6 +297,7 @@ def ingest(raw, as_of, ov=None, rates=None):
             "msftOverlap": bool(tpids),
             "openPipeline": [],
             "h1PipelineValue": 0.0,
+            "q1PipelineValue": 0.0,
             "h1RenewalValue": 0.0,
             "stalePipelineValue": 0.0,
             "bestStage": "",
@@ -305,7 +311,8 @@ def ingest(raw, as_of, ov=None, rates=None):
             continue
         rec = accounts.setdefault(str(sid), {
             "name": "", "tpids": [], "msftOverlap": False, "openPipeline": [],
-            "h1PipelineValue": 0.0, "h1RenewalValue": 0.0, "stalePipelineValue": 0.0,
+            "h1PipelineValue": 0.0, "q1PipelineValue": 0.0, "h1RenewalValue": 0.0,
+            "stalePipelineValue": 0.0,
             "bestStage": "", "bestStageWeight": 0.0,
         })
         close = str(pick(row, "CloseDate", "closeDate") or "")[:10]
@@ -316,6 +323,10 @@ def ingest(raw, as_of, ov=None, rates=None):
         # its stage says. It is surfaced as hygiene, never scored as live.
         stale = bool(close) and close < as_of.isoformat()
         in_h1 = bool(close) and h1_start.isoformat() <= close <= h1_end.isoformat()
+        # Q1 is a strict subset of H1. It is carried separately because the quota is set
+        # per quarter: a deal dated in Q2 supports the half but does nothing for the Q1
+        # number, and blending the two overstates how covered the current quarter is.
+        in_q1 = bool(close) and h1_start.isoformat() <= close <= q1_end.isoformat()
         is_renewal = otype.lower() in RENEWAL_TYPES
         product, product_basis = classify_product(pick(row, "Name", "name"), otype)
 
@@ -328,6 +339,7 @@ def ingest(raw, as_of, ov=None, rates=None):
             "forecast": pick(row, "ForecastCategoryName") or "",
             "stale": stale,
             "inH1": in_h1,
+            "inQ1": in_q1,
             "isRenewal": is_renewal,
             "product": product,
             "productBasis": product_basis,
@@ -342,6 +354,8 @@ def ingest(raw, as_of, ov=None, rates=None):
                 rec["h1RenewalValue"] += amount
             else:
                 rec["h1PipelineValue"] += amount
+                if in_q1:
+                    rec["q1PipelineValue"] = rec.get("q1PipelineValue", 0.0) + amount
                 weight = stage_weight(stage)
                 if weight > rec["bestStageWeight"]:
                     rec["bestStageWeight"] = weight

@@ -65,16 +65,31 @@ Writes `<RUN>/potential.json`.
 python3 SCRIPTS/actuals.py --print-queries
 ```
 
-Run the printed KQL through `revenue-mcp-server/query_kusto` (database `rev_source`), save each
-result, then:
+Run the printed KQL through `revenue-mcp-server/query_kusto` (database `rev_source`), save the
+combined result as `<RUN>/kusto/raw-query.json` in the shape `{"arr": {...}, "consumption": {...}}`,
+then:
 
 ```bash
-python3 SCRIPTS/actuals.py "<RUN>" --arr <file> --consumption <file>
+python3 SCRIPTS/actuals.py ingest "<RUN>/kusto/raw-query.json" "<RUN>"
+python3 SCRIPTS/potential.py "<RUN>/fy27-territory-plan.json" "<RUN>"
 ```
 
 This attaches current ARR, seats by product, and annualised consumption including `copilot aiu`.
 If the teammate has no Kusto access, skip it — the deck will lead on potential and say plainly
 that installed-base figures were unavailable.
+
+> **Two traps here, both silent.**
+>
+> `ingest` **writes** `<RUN>/raw-actuals.json`. Feeding it that file as *input* makes it read
+> its own normalised output, find nothing to normalise, and overwrite it with an empty
+> record. Always pass the raw Kusto capture (`kusto/raw-query.json`), never `raw-actuals.json`.
+>
+> `potential.py` reads `raw-actuals.json`, so it must run **after** `ingest`. Run it before and
+> every account is sized as greenfield.
+>
+> Neither failure raises. Both surface only as `currentArr: 0` on the focus totals and a
+> `$0` installed-base card on slide 1. **Check `currentArr` is non-zero before rendering.**
+> The `--arr` / `--consumption` flags shown in older revisions of this file do not exist.
 
 ### 3. Stage 1 — pick the trigger candidates
 
@@ -136,10 +151,36 @@ accounts; that is a data gap, not evidence that no partner exists.
 
 ### 6. Targets, Microsoft overlap and open pipeline
 
-Set the teammate's quota in `SCRIPTS/targets.json` — Bucket 1 is GHE + GHAS, Bucket 2 is
-consumption (Copilot, AI credits, Actions, Codespaces, Code Quality). Leave a target `null`
-if it is not yet set; the deck renders `TBD` and suppresses the attainment percentage rather
-than inventing a denominator. Targets are **net-new**; renewals are reported separately.
+Set the teammate's quota in `SCRIPTS/targets.json`. Bucket 1 is GHE + GHAS, sold as
+deals. Bucket 2 is consumption (Copilot, Actions, GHAzDO) and is marked
+`"recurring": true`, which changes how it is measured — see the run-rate model below.
+Leave a target `null` if it is not yet set; the deck renders `TBD` and suppresses the
+percentage rather than inventing a denominator. Q1 and H1 are tracked independently, so
+a firm current-quarter number with next quarter still `null` renders correctly. Targets
+are **net-new**; renewals are reported separately.
+
+**Bucket 2 is a run rate, not a booking.** Consumption revenue repeats every month unless
+something churns, so `targets.json` carries a `runRate` block with the last full month's
+revenue per product and how many months the quarter carries it for:
+
+```json
+"runRate": { "month": 1, "monthsInQuarter": 3,
+             "products": { "Copilot": 0, "Actions": 0, "GHAzDO": 0 } }
+```
+
+`targets.py` projects that flat across the quarter — no assumed ramp, a conservative floor
+rather than a forecast — and reports it as **Q1 coverage**. Two consequences that are easy
+to get wrong and are enforced in the script:
+
+- **The elapsed month's attainment and month one of the carry are the same money.** They
+  are counted once. Bucket 2 `q1Covered` is the carry alone; `attainedQ1` is reported as a
+  separate fact and never added on top.
+- **Open Bucket 2 pipeline is metered consumption already inside the carry.** It is shown
+  for context and excluded from coverage. Adding it would count the same revenue a third
+  time.
+
+Modelling Bucket 2 as a booking gap overstates the ask roughly four-fold: a book whose run
+rate already covers 82% of the quarter has a growth gap, not a hunting problem.
 
 Pull Microsoft TPIDs and open opportunities:
 
@@ -159,14 +200,25 @@ python3 SCRIPTS/targets.py "<RUN>/potential.json" "<RUN>/focus-accounts.json" "<
 **`plays.py` must run after CRM ingest and before stage 2.** Play is assigned in
 `workbook.py` from the account's own product footprint, using a deterministic ladder:
 
-| Condition | Play |
-|---|---|
-| Not on GHE | **Scale** — this is the migration and displacement play |
-| On GHE, Copilot on ≥ 50% of GHE licences | **Trust** |
-| On GHE, Copilot on < 50% | **Innovate** |
-| On GHE with GHAS, no Copilot | **Trust** — security has already landed |
-| On GHE, neither, **regulated** industry | **Trust** |
-| On GHE, neither, not regulated | **Innovate** |
+| Condition | Play | Priority within the play |
+|---|---|---|
+| Not on GHE | **Scale** — migration and displacement | Copilot or Teams seats already present |
+| On GHE, Copilot on ≥ 25% of GHE licences | **Trust** — govern and secure at scale | Higher attach ratio |
+| On GHE, Copilot < 25%, **regulated** industry | **Trust** — fallback tier | Higher attach ratio |
+| On GHE, Copilot < 25%, not regulated | **Innovate** — seat-expansion headroom | Larger GHE base |
+
+The Trust bar is `COPILOT_TRUST_RATIO` in `workbook.py`. Set it at the natural break in the
+book's attach distribution rather than at a round number — accounts below it are headroom
+stories, not govern-at-scale stories. **GHAS is deliberately not a Trust signal:** a GHAS
+footprint with no Copilot is an expansion opportunity, and treating it as Trust hid those
+accounts from the Innovate motion.
+
+Membership and priority are different mechanisms in different files. Membership is
+`classify_play()` in `workbook.py`. Priority is a **bounded tie-break** in `rank.py`
+(`PLAY_PRIORITY_WEIGHT`), normalised *within each play cohort* and added after the main
+composite score. It must stay bounded: the deck claims accounts are ranked on
+potential/pipeline/communication/triggers, and a priority term large enough to override
+those would make that claim false.
 
 **"On GHE" means true GitHub Enterprise, not the blended GHE/VS column.** SuperDash
 carries `Total GHE/VS Seats (Vol and Metered)`, which sums GitHub Enterprise seats *and*
@@ -174,12 +226,18 @@ Visual Studio bundle seats. A VS bundle **entitles** GHE but does not mean the c
 is on GitHub — a pure-VS account is a migration target, not an established customer.
 `workbook.py` therefore classifies on
 `ghe_true = Current GHE License Seats + Current GHE Metered Users` and reports VS bundle
-seats separately as `vsBundleSeats`. VS seats still count towards *potential sizing*,
-because they are a legitimate migration TAM signal. Passing the blended figure into
+seats separately as `vsBundleSeats`. VS seats still count towards *potential sizing*,because they are a legitimate migration TAM signal. Passing the blended figure into
 `classify_play()` routes migration targets into Trust/Innovate and is the single most
 damaging mistake available in this file.
 
-The last two rungs need `Account.Industry`, which only arrives with CRM ingest. Accounts
+`revenueSignals` on each account carries `gheSeats`, `vsBundleSeats`, `copilotSeats`,
+`teamsSeats`, `ghazdoSeats`, `ghasSeats`, `activeCommitters` and `meteredConsumption`.
+`teamsSeats` is the strongest Scale priority signal after Copilot — a Teams account has
+already chosen GitHub and needs an upgrade conversation, not a displacement one.
+`ghazdoSeats` is GitHub Advanced Security for Azure DevOps: immaterial as a sell line, but
+a precise ADO-migration TAM signal feeding GHE and GHAS.
+
+The regulated rung needs `Account.Industry`, which only arrives with CRM ingest. Accounts
 waiting on it are marked `playPendingIndustry` and default to Innovate; `plays.py` resolves
 them once industry is known. It can only move an account **between Trust and Innovate**, never
 in or out of the play set, so the stage-1 candidate list cannot change depending on whether
@@ -341,7 +399,7 @@ questions:
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
 | 5 | Portfolio by play, with TPID flags | Q2 |
 | 6 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 7 | Coverage — target vs live, dated pipeline | Q4 |
+| 7 | Coverage — Q1 target vs what already covers it | Q4 |
 | 8 | How I get there — motions and account sequencing | **Q4** |
 | 9 | Microsoft overlap and partner leverage | Q5 |
 | 10 | What's working, what's not | Q6 |
@@ -358,10 +416,21 @@ marked `*` and the footnote states that their value is excluded from the coverag
 so the two slides cannot be read as contradicting each other.
 
 **A negative uncovered gap is rendered as language, not a minus sign.** Once dated pipeline
-exceeds the remaining gap, `uncoveredGap` goes negative; printing "$-16K uncovered" reads as
+exceeds the remaining gap, the gap goes negative; printing "$-16K uncovered" reads as
 a hole when it is a surplus. Slides 7 and 11 resolve the sign into words and, when a bucket
 only nets out because one product over-covers, say so explicitly rather than reporting
 comfort.
+
+**Focus accounts are H1-scoped; targets and coverage are Q1-scoped.** The two windows are
+deliberately different. The account list answers "who do I work for the half"; the number
+answers "am I covered this quarter". `crm_context.py` dates every opportunity against both
+windows (`inH1`, `inQ1`) so a deal landing later in the half still appears on the deal slide
+instead of vanishing from a Q1-only filter.
+
+**Coverage is stated per bucket on its own terms.** Bucket 1 is `attained + dated Q1
+pipeline`; Bucket 2 is the run-rate carry alone. Presenting both as one blended percentage
+hides the fact that they fail in completely different ways — Bucket 1 by a deal slipping,
+Bucket 2 by consumption churning.
 
 **No slide carries modelled potential ARR.** Sizing is presented on slide 5 in units that can
 be verified — seats, active committers, invoiced credits — and every dollar figure elsewhere is

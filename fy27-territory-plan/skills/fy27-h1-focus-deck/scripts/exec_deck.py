@@ -37,9 +37,9 @@ LEARNING_ROWS = 6
 KEY_DEAL_ROWS = 7
 
 PLAY_THESIS = {
-    "Innovate": "AI-native delivery - Copilot seats and AI credits as the entry motion",
-    "Trust": "Secure the software supply chain - GHAS on committer bases already in place",
-    "Scale": "Consolidate onto one platform - GHE migration and toolchain displacement",
+    "Innovate": "On GHE, Copilot attach under 25% - the seat-expansion headroom",
+    "Trust": "On GHE with Copilot embedded, or regulated - govern and secure at scale",
+    "Scale": "Not yet on GHE - consolidate onto the platform, Copilot or Teams as the way in",
 }
 
 
@@ -78,7 +78,7 @@ def slide_1_scorecard(deck, coverage, focus):
     b2 = bucket_of(coverage, "Bucket 2")
 
     deck.text(slide, MARGIN, Inches(0.52), W - 2 * MARGIN, Inches(0.28),
-              "FY27 H1 \u00b7 TERRITORY PLAN \u00b7 INDIA", size=11, color=ACCENT,
+              "FY27 Q1 \u00b7 TERRITORY PLAN \u00b7 INDIA", size=11, color=ACCENT,
               bold=True, space=True)
     deck.text(slide, MARGIN, Inches(0.86), W - 2 * MARGIN, Inches(0.62),
               "Where I am, and how I make the number", size=32, color=WHITE, bold=True)
@@ -91,32 +91,44 @@ def slide_1_scorecard(deck, coverage, focus):
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(2.16), Emu(int(w - Inches(0.6))),
                   Inches(0.26), bucket.get("label", "").upper(), size=10.5, color=color,
                   bold=True, space=True)
-        attained = bucket.get("attainedH1") or 0
+        target = bucket.get("q1Target")
+        known = bucket.get("q1TargetKnown")
+        recurring = bucket.get("recurring")
+        covered = bucket.get("q1Covered") or 0
+        # A recurring bucket's headline is its carry, not its booked month. Showing one
+        # month of consumption against a quarterly target read as 28% attained when the
+        # same run rate actually covers 82% of the quarter on its own.
+        headline = covered if recurring else (bucket.get("attainedQ1") or 0)
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(2.5), Inches(2.4), Inches(0.6),
-                  money(attained), size=34, color=WHITE, bold=True)
-        target = bucket.get("h1Target")
-        if bucket.get("targetKnown"):
-            right = "of %s H1 target" % money(target)
-            sub = "%s to go \u00b7 %.0f%% attained" % (money(bucket.get("gap")),
-                                                       bucket.get("attainmentPct") or 0)
+                  money(headline), size=34, color=WHITE, bold=True)
+        if known:
+            right = "of %s Q1 target" % money(target)
+            gap = bucket.get("q1Gap")
+            pct = bucket.get("q1CoveredPct") or 0
+            if recurring:
+                sub = ("%s growth needed \u00b7 %.0f%% covered by run rate"
+                       % (money(max(0.0, float(gap or 0))), pct))
+            else:
+                sub = ("%s covered incl. Q1 pipeline (%.0f%%)"
+                       % (money(covered), pct))
         else:
-            right = "H1 target: TBD"
+            right = "Q1 target: TBD"
             sub = "target not yet set \u2014 attainment absolute"
         deck.text(slide, Emu(int(x + Inches(2.85))), Inches(2.72), Emu(int(w - Inches(3.15))),
                   Inches(0.3), right, size=12.5, color=MUTED)
         # Pipeline belongs inside its own bucket panel. Shown as one blended figure it
         # reads as cover for whichever gap it happens to sit next to.
-        live = bucket.get("livePipeline") or 0
-        if live:
-            sub = "%s \u00b7 %s live pipeline" % (sub, money(live))
+        live = bucket.get("q1LivePipeline") or 0
+        if live and not recurring:
+            sub = "%s \u00b7 %s live Q1 pipeline" % (sub, money(live))
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.18), Emu(int(w - Inches(0.6))),
                   Inches(0.28), sub, size=11, color=MUTED)
 
         # Progress bar. A number without a denominator is a claim; a bar is a position.
         bar_w = w - Inches(0.6)
         deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.56), bar_w, Inches(0.16), PANEL_2)
-        if bucket.get("targetKnown") and target:
-            filled = max(0.02, min(1.0, float(attained) / float(target)))
+        if known and target:
+            filled = max(0.02, min(1.0, float(headline) / float(target)))
             deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.56),
                       Emu(int(bar_w * filled)), Inches(0.16), color)
         return h
@@ -125,13 +137,16 @@ def slide_1_scorecard(deck, coverage, focus):
     bucket_card(Inches(6.95), b2, PLAY_COLOR["Innovate"])
 
     ftotals = focus.get("totals", {})
-    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("q1ByBucket", {}).get("Bucket 1")
+    run = coverage.get("runRate", {}) or {}
+    month_total = round(sum(float(v or 0) for v in (run.get("products") or {}).values()), 2)
     cards = [
         ("Focus accounts", num(focus.get("selectedCount")), "of %s in book" % num(focus.get("bookSize"))),
-        ("In two-way comms", num(ftotals.get("withTwoWay")),
-         "of %s focus accounts" % num(focus.get("selectedCount"))),
+        ("Bucket 2 run rate", money(month_total) if month_total else "TBD",
+         "per month \u00b7 carried flat across Q1" if month_total
+         else "set runRate in targets.json"),
         ("Current ARR", money(ftotals.get("currentArr")), "installed base in focus set"),
-        ("Bucket 1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in H1"),
+        ("Bucket 1 Q1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in Q1"),
     ]
     x = MARGIN
     for label, value, sub in cards:
@@ -139,12 +154,14 @@ def slide_1_scorecard(deck, coverage, focus):
         x += Inches(3.11)
 
     deck.text(slide, MARGIN, Inches(6.06), W - 2 * MARGIN, Inches(0.5),
-              "Bucket 1 is GHE + GHAS. Bucket 2 is consumption \u2014 Copilot, AI credits, "
-              "Actions, Codespaces, Code Quality. Targets and attainment are net-new; "
-              "renewals are tracked separately and shown on the coverage slide.",
+              "Bucket 1 is GHE + GHAS, sold as deals. Bucket 2 is recurring consumption "
+              "\u2014 Copilot, Actions, GHAzDO \u2014 so it is measured as run rate carried "
+              "across the quarter, not as bookings. Focus accounts are scoped to H1; "
+              "targets and coverage are Q1.",
               size=11.5, color=MUTED)
-    deck.footnote(slide, "Attainment as of Q1 to date. All figures computed from SuperDash, "
-                         "Kusto billing facts and Salesforce - none entered by hand.")
+    deck.footnote(slide, "Bucket 2 attainment to date and month-1 run rate are the same money, "
+                         "counted once. All figures computed from SuperDash, Kusto billing facts "
+                         "and Salesforce - none entered by hand.")
     return slide
 
 
@@ -441,92 +458,91 @@ def slide_7_coverage(deck, coverage, focus):
     buckets = {b.get("bucket"): b for b in coverage.get("buckets", []) or []}
     ghe = products.get("GHE") or {}
     ghas = products.get("GHAS") or {}
-    ghe_pipe = ghe.get("pipelineCoverage")
-    ghas_pipe = ghas.get("pipelineCoverage")
+    copilot = products.get("Copilot") or {}
     b1 = buckets.get("Bucket 1") or {}
-    uncovered = b1.get("uncoveredGap")
-    # uncoveredGap goes negative once pipeline exceeds the remaining gap. Rendering a
-    # negative as "$-16K uncovered" reads as a hole when it is in fact a surplus, so
-    # the sign is resolved into language here and never printed raw.
-    over_covered = uncovered is not None and uncovered <= 0
-    surplus = abs(uncovered) if uncovered is not None else None
-    ghe_short = max(0.0, float(ghe.get("h1Target") or 0)
-                    - float(ghe.get("livePipeline") or 0))
+    b2 = buckets.get("Bucket 2") or {}
+    ghe_gap = ghe.get("q1Gap")
+    ghas_cover = ghas.get("q1CoveredPct")
+    b2_gap = b2.get("q1Gap")
+    b1_covered_pct = b1.get("q1CoveredPct")
 
     # Every column below is a dated, invoiceable number. Nothing modelled.
-    if ghe_pipe is None or ghas_pipe is None:
+    if not b1.get("q1TargetKnown") or not b2.get("q1TargetKnown"):
         narrative = ("Targets are not yet set for every product, so coverage reads TBD. Fill in "
-                     "targets.json and re-run to see the uncovered gap per product.")
-        note = ("Every column here is dated pipeline against a set target - no modelled "
-                "potential. Coverage reads TBD wherever targets.json is not yet filled in.")
+                     "targets.json and re-run to see the Q1 gap per product.")
+        note = ("Coverage reads TBD wherever targets.json is not yet filled in.")
     else:
-        if over_covered:
-            narrative = ("Bucket 1 clears on dated pipeline - %s more than the remaining gap - "
-                         "but only because GHAS runs at %.2fx. GHE is at %.2fx and still %s "
-                         "short on its own line, so the half depends on GHAS landing and on "
-                         "new GHE supply arriving behind it."
-                         % (money(surplus), ghas_pipe, ghe_pipe, money(ghe_short)))
-            note = ("Bucket 1 nets to covered, carried by GHAS at %.2fx. Read that as "
-                    "concentration risk, not comfort: GHE alone is %s short at %.2fx, so if "
-                    "GHAS slips there is nothing behind it. Protect the GHAS closes and keep "
-                    "adding GHE migration supply."
-                    % (ghas_pipe, money(ghe_short), ghe_pipe))
-        else:
-            narrative = ("GHAS is covered %.2fx by dated pipeline, so the H1 GHAS number is a "
-                         "close-and-land problem, not a hunting problem. GHE is at %.2fx and is "
-                         "the whole constraint: %s of Bucket 1 is still uncovered, and it has to "
-                         "come from migration supply and new logos."
-                         % (ghas_pipe, ghe_pipe,
-                            money(uncovered) if uncovered is not None else "the balance"))
-            note = ("GHAS at %.2fx is already covered by "
-                    "dated deals, so protect it and close it. GHE at %.2fx is where the half is "
-                    "won or lost - %s uncovered in Bucket 1. If asked what changes the number, "
-                    "the answer is GHE migration supply, not more GHAS activity."
-                    % (ghas_pipe, ghe_pipe,
-                       money(uncovered) if uncovered is not None else "the balance"))
+        narrative = (
+            "Bucket 1 is a deal problem: %s of dated Q1 pipeline against a %s target, but it "
+            "leans on GHAS at %.0f%% while GHE is still %s short. Bucket 2 is not a deal "
+            "problem at all \u2014 the existing run rate already covers %.0f%% of the quarter, "
+            "and the whole ask is %s of growth on top, %s of it Copilot."
+            % (money(b1.get("q1LivePipeline")), money(b1.get("q1Target")),
+               ghas_cover or 0, money(max(0.0, float(ghe_gap or 0))),
+               b2.get("q1CoveredPct") or 0, money(max(0.0, float(b2_gap or 0))),
+               money(max(0.0, float(copilot.get("q1Gap") or 0)))))
+        note = (
+            "The two buckets fail differently and must be managed differently. Bucket 1 is "
+            "carried by GHAS closes - concentration risk, not comfort - with GHE %s short on "
+            "its own line. Bucket 2 needs no new logos: hold the %s monthly run rate and add "
+            "%s of net-new consumption, overwhelmingly Copilot seats. If asked what changes "
+            "the number, the answer is GHE migration supply and Copilot seat expansion."
+            % (money(max(0.0, float(ghe_gap or 0))),
+               money(round(sum(float(v or 0) for v in
+                              ((coverage.get("runRate") or {}).get("products") or {}).values()), 2)),
+               money(max(0.0, float(b2_gap or 0)))))
 
-    slide = deck.slide("Coverage: target vs live, dated pipeline",
-                       "Q3 \u00b7 Coverage math", note=note)
+    slide = deck.slide("Coverage: Q1 target vs what already covers it",
+                       "Q1 \u00b7 Coverage math", note=note)
     rows, colors = [], {}
 
     for index, product in enumerate(coverage.get("products", []) or []):
-        known = product.get("targetKnown")
-        pipe_ratio = product.get("pipelineCoverage")
+        known = product.get("q1TargetKnown")
+        pct = product.get("q1CoveredPct")
+        recurring = (buckets.get(product.get("bucket")) or {}).get("recurring")
+        gap = product.get("q1Gap")
         rows.append([
             product.get("product", ""),
-            product.get("bucket", ""),
-            money(product.get("h1Target")) if known else "TBD",
-            money(product.get("livePipeline")),
-            ("%.2fx" % pipe_ratio) if pipe_ratio is not None else "\u2014",
-            (money(max(0.0, float(product.get("h1Target") or 0)
-                       - float(product.get("livePipeline") or 0)))
-             if (float(product.get("h1Target") or 0)
-                 - float(product.get("livePipeline") or 0)) > 0 else "Covered")
-            if known else "\u2014",
+            "Run rate" if recurring else "Dated pipeline",
+            money(product.get("q1Target")) if known else "TBD",
+            money(product.get("q1Covered")),
+            ("%.0f%%" % pct) if pct is not None else "\u2014",
+            (money(gap) if gap is not None and gap > 0 else "Covered") if known else "\u2014",
         ])
-        # Colour on dated pipeline: that is the number that carries risk.
-        colors[index] = ratio_color(pipe_ratio)
+        # Colour on coverage: that is the number that carries risk.
+        colors[index] = ratio_color((pct / 100.0) if pct is not None else None)
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
-               ["Product", "Bucket", "H1 target", "Live H1 pipeline", "Pipeline cover",
-                "Uncovered"],
-               [1.8, 1.8, 1.9, 2.2, 1.8, 2.6], rows, row_h=0.46, size=11.5,
+               ["Product", "Covered by", "Q1 target", "Q1 covered", "Cover", "Gap to target"],
+               [1.7, 2.0, 1.9, 1.9, 1.5, 3.1], rows, row_h=0.46, size=11.5,
                colors=colors)
 
     top = float(BODY_TOP) + Inches(0.3) + Inches(0.46) * len(rows) + Inches(0.32)
 
-    by_bucket = pipeline.get("byBucket", {}) or {}
     seller = pipeline.get("seller") or 0
+    b1_gap = b1.get("q1Gap")
+    b1_over = b1_gap is not None and b1_gap <= 0
+    b1_known = b1.get("q1TargetKnown")
+    b2_known = b2.get("q1TargetKnown")
+    # With no target there is no denominator, so a ratio card would be dividing a real
+    # number by zero and printing it as fact. Say TBD instead.
     cards = [
-        ("Bucket 1 net-new", money(by_bucket.get("Bucket 1")),
-         "GHE + GHAS, close-dated in H1", ACCENT),
-        ("Bucket 2 net-new", money(by_bucket.get("Bucket 2")),
-         "consumption, does not cover Bucket 1", ACCENT),
-        ("Bucket 1 uncovered",
-         "TBD" if uncovered is None else ("Covered" if over_covered else money(uncovered)),
-         ("%s clear of the gap" % money(surplus)) if over_covered
-         else "after attainment and pipeline",
-         PLAY_COLOR["Scale"] if over_covered else WARN),
+        ("Bucket 1 Q1 covered",
+         ("%s / %s" % (money(b1.get("q1Covered")), money(b1.get("q1Target"))))
+         if b1_known else money(b1.get("q1Covered")),
+         ("attained + dated Q1 pipeline (%.0f%%)" % (b1_covered_pct or 0)) if b1_known
+         else "dated Q1 pipeline \u00b7 target TBD",
+         PLAY_COLOR["Scale"] if (b1_known and b1_over) else WARN),
+        ("Bucket 2 Q1 covered",
+         ("%s / %s" % (money(b2.get("q1Covered")), money(b2.get("q1Target"))))
+         if b2_known else money(b2.get("q1Covered")),
+         ("run rate carried flat (%.0f%%)" % (b2.get("q1CoveredPct") or 0)) if b2_known
+         else "run rate flat \u00b7 target TBD", ACCENT),
+        ("Bucket 2 growth gap",
+         money(max(0.0, float(b2_gap or 0))) if b2_known else "TBD",
+         ("%s Copilot \u00b7 the real Q1 ask" % money(max(0.0, float(copilot.get("q1Gap") or 0))))
+         if b2_known else "set the Bucket 2 target to size this",
+         WARN),
         ("H1 renewal pipeline", money(pipeline.get("renewal")),
          "excluded from attainment", MUTED),
     ]
@@ -540,8 +556,9 @@ def slide_7_coverage(deck, coverage, focus):
 
     # Provenance. Leadership will look these numbers up in Salesforce; anything that
     # will not be found there has to be declared on the slide, not in a backup pack.
-    marks = ["Targets are net-new. Renewal pipeline is shown for context only and does not "
-             "count towards attainment."]
+    marks = ["Targets are net-new; renewals are context only.",
+             "Bucket 2 is recurring: the elapsed month and month one of the carry are the "
+             "same money, counted once."]
     if seller:
         # Name the accounts from the data. Hardcoding them here meant every seller who
         # ran the skill printed one particular customer's name on their own deck.
@@ -738,29 +755,28 @@ def slide_11_asks(deck, coverage, focus, learnings):
     ghas = products.get("GHAS", {})
 
     leadership = []
-    if ghe.get("targetKnown"):
+    if ghe.get("q1TargetKnown"):
         b1 = next((b for b in coverage.get("buckets", []) or []
                    if b.get("bucket") == "Bucket 1"), {})
-        gap = b1.get("uncoveredGap")
-        ghe_short = max(0.0, float(ghe.get("h1Target") or 0)
-                        - float(ghe.get("livePipeline") or 0))
+        gap = b1.get("q1Gap")
+        ghe_short = max(0.0, float(ghe.get("q1Gap") or 0))
         if gap is not None and gap <= 0:
             # Bucket 1 nets out only because GHAS over-covers. The ask is still real,
             # so it is framed on the GHE line rather than the netted bucket.
             leadership.append(
-                "GHE supply: %s is close-dated against a %s H1 target (%.2fx), %s short on "
+                "GHE supply: %s is close-dated against a %s Q1 target (%.0f%%), %s short on "
                 "the GHE line. Bucket 1 only nets to covered because GHAS is carrying it, so "
                 "I need migration-led demand generation or account additions on GHE rather "
                 "than relying on that concentration holding."
-                % (money(ghe.get("livePipeline")), money(ghe.get("h1Target")),
-                   ghe.get("pipelineCoverage") or 0, money(ghe_short)))
+                % (money(ghe.get("q1LivePipeline")), money(ghe.get("q1Target")),
+                   ghe.get("q1CoveredPct") or 0, money(ghe_short)))
         else:
             leadership.append(
-                "GHE supply: %s is close-dated against a %s H1 target (%.2fx), leaving %s of "
+                "GHE supply: %s is close-dated against a %s Q1 target (%.0f%%), leaving %s of "
                 "Bucket 1 uncovered. I need migration-led demand generation or account "
                 "additions to close the supply gap, not just conversion pressure."
-                % (money(ghe.get("livePipeline")), money(ghe.get("h1Target")),
-                   ghe.get("pipelineCoverage") or 0,
+                % (money(ghe.get("q1LivePipeline")), money(ghe.get("q1Target")),
+                   ghe.get("q1CoveredPct") or 0,
                    money(gap) if gap is not None else "the balance"))
     else:
         leadership.append(
@@ -768,27 +784,40 @@ def slide_11_asks(deck, coverage, focus, learnings):
             "need the target so I can tell you whether that is coverage or a supply gap."
             % money(ghe.get("livePipeline")))
 
-    consumption = products.get("Consumption") or {}
-    if not consumption.get("targetKnown"):
+    # Bucket 2 is a run-rate business, so the ask is growth on top of the carry, not a
+    # hunt for the whole target. Sizing it as a booking gap overstated it four-fold.
+    b2 = bucket_of(coverage, "Bucket 2")
+    copilot = products.get("Copilot") or {}
+    if b2.get("q1TargetKnown"):
+        b2_gap = max(0.0, float(b2.get("q1Gap") or 0))
+        if b2_gap > 0:
+            leadership.append(
+                "Copilot seat growth: the existing run rate already covers %.0f%% of the %s "
+                "Bucket 2 quarter, so the ask is %s of net-new consumption \u2014 %s of it "
+                "Copilot. That is seat expansion inside accounts already live, not new logos, "
+                "and it needs adoption support rather than more pipeline."
+                % (b2.get("q1CoveredPct") or 0, money(b2.get("q1Target")), money(b2_gap),
+                   money(max(0.0, float(copilot.get("q1Gap") or 0)))))
+    else:
         leadership.append(
             "Bucket 2 target: consumption target is still unset. I am carrying %s of dated "
             "consumption pipeline and %s attained - I need the number to plan against."
-            % (money(consumption.get("livePipeline")),
-               money(bucket_of(coverage, "Bucket 2").get("attainedH1"))))
+            % (money((products.get("Consumption") or {}).get("livePipeline")),
+               money(b2.get("attainedH1"))))
 
-    ghas_pipe = ghas.get("pipelineCoverage")
-    if ghas_pipe is not None and ghas_pipe >= 1:
+    ghas_cover = ghas.get("q1CoveredPct")
+    if ghas_cover is not None and ghas_cover >= 100:
         leadership.append(
-            "GHAS delivery capacity: GHAS is already %.2fx covered by dated pipeline (%s). "
+            "GHAS delivery capacity: GHAS is already %.0f%% covered by dated Q1 pipeline (%s). "
             "The risk is no longer sourcing it, it is landing it \u2014 I need "
             "security-specialist time to get these to production, not more pipeline."
-            % (ghas_pipe, money(ghas.get("livePipeline"))))
+            % (ghas_cover, money(ghas.get("q1LivePipeline"))))
     else:
         leadership.append(
             "GHAS technical capacity: %d of %d focus accounts consume GHAS today, against %s "
             "of dated GHAS pipeline. Converting that needs security-specialist time, not more "
             "pipeline." % (facts.get("consumingAccounts", {}).get("ghas", 0),
-                           facts.get("focusCount", 0), money(ghas.get("livePipeline"))))
+                           facts.get("focusCount", 0), money(ghas.get("q1LivePipeline"))))
 
     xfn = [
         "Partnerships: %d focus accounts carry a Microsoft TPID but only %d have a named "
@@ -809,15 +838,15 @@ def slide_11_asks(deck, coverage, focus, learnings):
     deck.panel(slide, Inches(6.95), BODY_TOP, Inches(6.0), "FROM CROSS-FUNCTIONAL PARTNERS",
                xfn, PLAY_COLOR["Scale"], size=11.5, gap=0.2, min_h=Inches(4.5))
 
-    b1_gap = bucket_of(coverage, "Bucket 1").get("gap")
-    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
+    b1_gap = bucket_of(coverage, "Bucket 1").get("q1Gap")
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("q1ByBucket", {}).get("Bucket 1")
     commitment = (
-        "Commitment: %s of Bucket 1 gap closed across H1, worked through %d focus accounts "
+        "Commitment: %s of Bucket 1 gap closed in Q1, worked through %d focus accounts "
         "with %s already in dated pipeline." % (money(b1_gap), focus.get("selectedCount", 0),
                                                 money(b1_pipe))
-        if b1_gap else
-        "Commitment: %d focus accounts with %s in dated pipeline, worked to the plan on the "
-        "previous slides." % (focus.get("selectedCount", 0), money(b1_pipe))
+        if b1_gap and b1_gap > 0 else
+        "Commitment: %d focus accounts with %s in dated Q1 pipeline, worked to the plan on "
+        "the previous slides." % (focus.get("selectedCount", 0), money(b1_pipe))
     )
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.36),
               commitment, size=12.5, color=WHITE, bold=True)

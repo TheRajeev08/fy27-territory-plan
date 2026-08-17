@@ -185,6 +185,7 @@ def pipeline_entries(record, rates, h1_start, h1_end):
             "forecast": line.get("forecast") or "Pipeline",
             "stale": False,
             "inH1": True,
+            "inQ1": quarter == "Q1",
             "isRenewal": False,
             "product": product,
             "productBasis": "seller",

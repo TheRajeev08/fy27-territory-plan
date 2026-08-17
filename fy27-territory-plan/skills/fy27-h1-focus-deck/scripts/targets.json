@@ -1,9 +1,21 @@
 {
-  "_comment": "Targets ship blank. Fill in your own quota per bucket and quarter, then re-run targets.py and exec_deck.py. A null target renders TBD on the deck rather than inventing a denominator.",
+  "_comment": "Targets and run rate ship blank. Fill in your own quota per bucket and quarter, and your month-to-date consumption run rate per product, then re-run targets.py and exec_deck.py. A null target renders TBD on the deck rather than inventing a denominator.",
   "fiscalYear": "FY27",
   "half": "H1",
+  "focusQuarter": "Q1",
+  "_focusQuarterNote": "The deck is presented against Q1. H1 figures are still computed and shown alongside, because pipeline dated in Q2 supports the half even though it does nothing for the current quarter's number.",
   "basis": "net-new",
   "_basisNote": "Targets are net-new / expansion ACV. Renewals are tracked separately and are not counted towards attainment.",
+  "runRate": {
+    "_note": "Bucket 2 is consumption and therefore recurring: last full month's revenue repeats unless something churns. `months` is how many months the quarter carries it for, held flat with no assumed ramp. This is a conservative floor, not a forecast - any seat additions land as growth on top of it.",
+    "month": 1,
+    "monthsInQuarter": 3,
+    "products": {
+      "Copilot": null,
+      "Actions": null,
+      "GHAzDO": null
+    }
+  },
   "buckets": {
     "Bucket 1": {
       "label": "Bucket 1 - GHE + GHAS",
@@ -33,10 +45,21 @@
         "AIU",
         "Actions",
         "Codespaces",
-        "Code Quality"
+        "Code Quality",
+        "GHAzDO"
       ],
+      "recurring": true,
+      "_recurringNote": "Coverage for this bucket counts the run-rate carry, not just booked attainment. Treating one month of consumption as 'attained' and the rest as a hole to sell overstates the gap by the two months of revenue that simply recur.",
       "targets": {
-        "Consumption": {
+        "Copilot": {
+          "Q1": null,
+          "Q2": null
+        },
+        "Actions": {
+          "Q1": null,
+          "Q2": null
+        },
+        "GHAzDO": {
           "Q1": null,
           "Q2": null
         }
