@@ -15,12 +15,13 @@ learnings.json, partners.json and fy27-territory-plan.json from the run director
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from deck import (  # noqa: E402
-    Deck, money, num, truncate,
+    Deck, money, num, truncate, truncate_fit,
     INK, PANEL, PANEL_2, LINE, TEXT, MUTED, WHITE, ACCENT, WARN, GOOD, PLAY_COLOR,
     MARGIN, BODY_TOP, W, H,
 )
@@ -37,10 +38,37 @@ LEARNING_ROWS = 6
 KEY_DEAL_ROWS = 7
 
 PLAY_THESIS = {
-    "Innovate": "On GHE, Copilot attach under 25% - the seat-expansion headroom",
+    "Innovate": "Copilot seat expansion - a GHE base with attach under 25%, "
+                "or a Copilot-led account",
     "Trust": "On GHE with Copilot embedded, or regulated - govern and secure at scale",
     "Scale": "Not yet on GHE - consolidate onto the platform, Copilot or Teams as the way in",
 }
+
+# Who runs the account. Derived from the Microsoft tier set in crm_context.py: a named
+# Microsoft owner means co-sell, a TPID alone means the deal needs a delivery partner,
+# neither means it is mine to run direct.
+LED_LABEL = {1: "Microsoft led", 2: "Partner led", 3: "Seller led"}
+LED_COLOR = {1: WHITE, 2: WARN, 3: MUTED}
+
+# One account per play is worked through end to end; the rest are listed. The default is
+# the highest-ranked account in the play, because that is the one leadership will ask
+# about. A seller who wants a different illustration drops a `paf-accounts.json` in the
+# run directory - {"Innovate": "<account name>", ...} - and it is honoured where the name
+# matches an account in that play. No account name is hard-coded into the skill.
+PAF_ACCOUNTS_FILE = "paf-accounts.json"
+
+# The product each play sells, and the token that reports it in the account's
+# consumption string ("GHE 2 + VS bundle 0; CfB 76; ... GHAS 0").
+PLAY_PRODUCT = {"Innovate": "Copilot", "Trust": "GHAS", "Scale": "GHE"}
+CONSUMPTION_TOKEN = {"Innovate": "CfB", "Trust": "GHAS", "Scale": "GHE"}
+
+# Four key actions fit the panel. Every play has at least four in both phases, so this
+# never silently drops to a shorter sequence.
+PAF_STEPS = 4
+
+# Two columns of seven. Scale is the largest play at 15 accounts, so 14 listed beside
+# the worked example is the binding case.
+LIST_ROWS = 7
 
 
 def load(run_dir, name, default=None):
@@ -68,6 +96,71 @@ def bucket_of(coverage, name):
     return {}
 
 
+def led_by(account):
+    """Microsoft tier -> who runs the account."""
+    return LED_LABEL.get(int(account.get("msftTier") or 3), "Seller led")
+
+
+def partner_names(partner_map, account):
+    named = [p.get("name") for p in
+             (partner_map.get(account.get("salesforceId"), {}) or {}).get("partners", [])
+             if p.get("name") and p.get("name") != "Invalid"]
+    # Order is not meaningful in the source, so de-duplicate while keeping first-seen.
+    seen, out = set(), []
+    for name in named:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            out.append(name)
+    return out
+
+
+def consumption_token(text, token):
+    """Read one figure out of 'GHE 2 + VS bundle 0; CfB 76; ... GHAS 0'.
+
+    Splitting on both ';' and '+' isolates each claim, so 'GHAS' cannot match inside
+    'GHAzDO' and 'GHE' cannot match inside a bundle count that follows it.
+    """
+    for part in re.split(r"[;+]", str(text or "")):
+        match = re.match(r"^\s*%s\s+([0-9,]+)" % re.escape(token), part)
+        if match:
+            return int(match.group(1).replace(",", ""))
+    return None
+
+
+def paf_steps(paf, play, phase, limit=PAF_STEPS):
+    actions = ((paf or {}).get("plays", {}).get(play, {}) or {}).get(phase, []) or []
+    return actions[:limit]
+
+
+# The consumption string is internal telemetry shorthand ("GHE 2 + VS bundle 0; CfB 0;
+# ... ADO TAM 276"). Leadership should not have to decode it, so translate the tokens
+# that carry meaning and drop the zeroes.
+FOOTPRINT_LABELS = (
+    ("GHE", "GHE seats"),
+    ("VS bundle", "Visual Studio bundle seats"),
+    ("CfB", "Copilot Business seats"),
+    ("Teams", "Team plan seats"),
+    ("UBB", "on usage-based billing"),
+    ("committers L90d", "active committers (90d)"),
+    ("GHAS", "GHAS committers"),
+    ("ADO TAM", "Azure DevOps users"),
+)
+
+
+def footprint(text):
+    parts = []
+    for token, label in FOOTPRINT_LABELS:
+        value = consumption_token(text, token)
+        if not value:
+            continue
+        if value == 1:
+            for plural, singular in (("seats", "seat"), ("committers", "committer"),
+                                     ("users", "user")):
+                label = label.replace(plural, singular)
+        parts.append("%s %s" % (num(value), label))
+    return ", ".join(parts) or "no product footprint recorded"
+
+
 # ---------------------------------------------------------------- slides
 
 def slide_1_scorecard(deck, coverage, focus):
@@ -89,7 +182,7 @@ def slide_1_scorecard(deck, coverage, focus):
         h = Inches(2.2)
         deck.fill(slide, x, Inches(1.95), w, h, PANEL, line=LINE, radius=True)
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(2.16), Emu(int(w - Inches(0.6))),
-                  Inches(0.26), bucket.get("label", "").upper(), size=10.5, color=color,
+                  Inches(0.26), bucket.get("label", "").upper(), size=11.5, color=color,
                   bold=True, space=True)
         target = bucket.get("h1Target")
         known = bucket.get("targetKnown")
@@ -113,7 +206,9 @@ def slide_1_scorecard(deck, coverage, focus):
                        % (money(covered), pct))
         else:
             right = "H1 target: TBD"
-            sub = "target not yet set \u2014 attainment absolute"
+            # Kept short: with no target the pipeline clause is appended below, and two
+            # rendered lines would run into the Q1/Q2 split beneath it.
+            sub = "no target set"
         deck.text(slide, Emu(int(x + Inches(2.85))), Inches(2.72), Emu(int(w - Inches(3.15))),
                   Inches(0.3), right, size=12.5, color=MUTED)
         # The Q1/Q2 split sits under the H1 headline: the half is the number, but the
@@ -123,7 +218,7 @@ def slide_1_scorecard(deck, coverage, focus):
         if q1t is not None and q2t is not None:
             split = "Q1 %s \u00b7 Q2 %s" % (money(q1t), money(q2t))
             deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.44),
-                      Emu(int(w - Inches(0.6))), Inches(0.26), split, size=10.5,
+                      Emu(int(w - Inches(0.6))), Inches(0.26), split, size=12,
                       color=MUTED)
         # Pipeline belongs inside its own bucket panel. Shown as one blended figure it
         # reads as cover for whichever gap it happens to sit next to.
@@ -131,7 +226,7 @@ def slide_1_scorecard(deck, coverage, focus):
         if live and not recurring:
             sub = "%s \u00b7 %s live H1 pipeline" % (sub, money(live))
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.12), Emu(int(w - Inches(0.6))),
-                  Inches(0.28), sub, size=11, color=MUTED)
+                  Inches(0.28), sub, size=12, color=MUTED)
 
         # Progress bar. A number without a denominator is a claim; a bar is a position.
         bar_w = w - Inches(0.6)
@@ -168,7 +263,7 @@ def slide_1_scorecard(deck, coverage, focus):
               "\u2014 Copilot, Actions, GHAzDO \u2014 so it is measured as run rate carried "
               "across the half, not as bookings. Targets, coverage and focus accounts are "
               "all H1; the Q1/Q2 split is shown because the half is not evenly loaded.",
-              size=11.5, color=MUTED)
+              size=12, color=MUTED)
     deck.footnote(slide, "Bucket 2 attainment to date and month-1 run rate are the same money, "
                          "counted once. All figures computed from SuperDash, Kusto billing facts "
                          "and Salesforce - none entered by hand.")
@@ -194,7 +289,7 @@ def slide_2_learnings(deck, learnings):
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Learning", "What the record shows", "What I do differently in H1"],
-               [3.0, 6.2, 4.1], rows, row_h=0.62, size=10.5, colors=colors, wrap=True)
+               [3.0, 6.2, 4.1], rows, row_h=0.62, size=12, colors=colors, wrap=True)
 
     deck.footnote(slide, "Derived from focus-accounts.json, coverage.json and Salesforce open "
                          "opportunity records - every figure above is reproducible.")
@@ -280,7 +375,7 @@ def slide_3_key_deals(deck, focus, crm=None, report=None):
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Account", "Play", "Product", "Deal size", "Stage", "Where it stands"],
-               [2.5, 1.2, 1.3, 1.3, 1.6, 5.4], rows, row_h=0.44, size=10.5,
+               [2.5, 1.2, 1.3, 1.3, 1.6, 5.4], rows, row_h=0.44, size=12,
                colors=colors, wrap=True)
 
     total = sum(d[0] for d in deals)
@@ -323,7 +418,7 @@ def slide_4_key_accounts(deck, focus):
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Account", "Play", "Live H1 pipe", "MSFT", "Why now"],
-               [2.9, 1.4, 1.5, 0.9, 6.3], rows, row_h=0.44, size=11, colors=colors)
+               [2.9, 1.4, 1.5, 0.9, 6.3], rows, row_h=0.44, size=12, colors=colors)
 
     bottom = float(BODY_TOP) + Inches(0.3) + Inches(0.44) * len(rows) + Inches(0.24)
     two_way = sum(1 for a in tier1 if a.get("twoWay"))
@@ -369,36 +464,36 @@ def slide_5_portfolio(deck, focus, coverage):
                   "%s accounts \u00b7 %s live" % (len(rows), money(pipe) if pipe else "no"),
                   size=19, color=WHITE, bold=True)
         deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(1.06))),
-                  Emu(int(col_w - Inches(0.52))), Inches(0.56),
-                  PLAY_THESIS[play], size=11, color=MUTED)
-        deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(1.72))),
+                  Emu(int(col_w - Inches(0.52))), Inches(0.64),
+                  PLAY_THESIS[play], size=12, color=MUTED)
+        deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(BODY_TOP + Inches(1.76))),
                   Emu(int(col_w - Inches(0.52))), Inches(0.26),
                   "%d IN TWO-WAY COMMS \u00b7 %d WITH MICROSOFT TPID"
                   % (engaged, overlap),
                   size=9.5, color=color, bold=True, space=True)
 
         top = sorted(rows, key=lambda r: int(r.get("rank") or 999))[:6]
-        cursor = float(BODY_TOP + Inches(2.08))
+        cursor = float(BODY_TOP + Inches(2.14))
         for account in top:
             flag = " \u25c6" if account.get("msftOverlap") else ""
             deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(cursor)),
                       Emu(int(col_w - Inches(1.5))), Inches(0.28),
-                      truncate(account.get("name", ""), 28) + flag, size=10.5, color=TEXT)
+                      truncate(account.get("name", ""), 28) + flag, size=12, color=TEXT)
             deck.text(slide, Emu(int(x + col_w - Inches(1.24))), Emu(int(cursor)),
                       Inches(0.98), Inches(0.28), "#%d" % int(account.get("rank") or 0),
-                      size=10.5, color=color, bold=True, align=PP_ALIGN.RIGHT)
+                      size=12, color=color, bold=True, align=PP_ALIGN.RIGHT)
             cursor += Inches(0.33)
         if len(rows) > 6:
             deck.text(slide, Emu(int(x + Inches(0.26))), Emu(int(cursor + Inches(0.04))),
                       Emu(int(col_w - Inches(0.52))), Inches(0.26),
-                      "+%d more" % (len(rows) - 6), size=10, color=MUTED)
+                      "+%d more" % (len(rows) - 6), size=11, color=MUTED)
         x += Inches(4.18)
 
     deck.text(slide, MARGIN, Inches(6.32), W - 2 * MARGIN, Inches(0.3),
               "\u25c6 = Microsoft TPID present \u2192 run as co-sell with the Microsoft account "
               "team and a delivery partner. %d of %d focus accounts qualify."
               % (focus.get("totals", {}).get("withMsftOverlap", 0), len(accounts)),
-              size=11, color=MUTED)
+              size=12, color=MUTED)
     deck.footnote(slide, "Top six by composite rank shown per play; full list in the evidence "
                          "workbook.")
     return slide
@@ -451,7 +546,7 @@ def slide_6_the_number(deck, potential, focus, coverage):
               2: PLAY_COLOR["Scale"], 3: ACCENT}
     deck.table(slide, MARGIN, Inches(3.42), W - 2 * MARGIN,
                ["Product", "Bucket", "Sizing basis", "Quantity", "Unit"],
-               [1.6, 1.3, 6.2, 1.6, 1.8], rows, row_h=0.46, size=11.5, colors=colors)
+               [1.6, 1.3, 6.2, 1.6, 1.8], rows, row_h=0.46, size=12, colors=colors)
 
     deck.text(slide, MARGIN, Inches(5.66), W - 2 * MARGIN, Inches(0.62),
               "This is the addressable volume in the focus set, counted in units we can verify "
@@ -528,7 +623,7 @@ def slide_7_coverage(deck, coverage, focus):
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
                ["Product", "Covered by", "H1 target", "H1 covered", "Cover", "Gap to target"],
-               [1.7, 2.0, 1.9, 1.9, 1.5, 3.1], rows, row_h=0.46, size=11.5,
+               [1.7, 2.0, 1.9, 1.9, 1.5, 3.1], rows, row_h=0.46, size=12,
                colors=colors)
 
     top = float(BODY_TOP) + Inches(0.3) + Inches(0.46) * len(rows) + Inches(0.32)
@@ -591,72 +686,163 @@ def slide_7_coverage(deck, coverage, focus):
     return slide
 
 
-def slide_8_how(deck, focus, report):
-    slide = deck.slide("How I get there", "Q4 \u00b7 Execution plan",
-                       note="This is the slide that answers the question leadership actually "
-                            "cares about. Each play has a named motion, a named set of accounts "
-                            "and a quarter. Q1 accounts are already in motion.")
-    accounts = focus.get("accounts", [])
-    by_play = {p: [] for p in PLAYS}
+def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=None):
+    """One slide per play: who leads every account, and how one of them gets run.
+
+    The worked example is rendered from paf.json key actions, so the framework claim in
+    the footnote is sourced rather than asserted. If paf.json is absent the panel says so
+    instead of substituting invented motions.
+    """
+    accounts = sorted([a for a in focus.get("accounts", []) if a.get("play") == play],
+                      key=lambda r: int(r.get("rank") or 999))
+    color = PLAY_COLOR[play]
+    counts = {1: 0, 2: 0, 3: 0}
     for account in accounts:
-        if account.get("play") in by_play:
-            by_play[account["play"]].append(account)
+        counts[int(account.get("msftTier") or 3)] = counts.get(
+            int(account.get("msftTier") or 3), 0) + 1
 
-    motions = {
-        "Innovate": [
-            "Copilot value review on the installed base \u2014 usage evidence, not a pitch",
-            "Convert AI credit consumption into committed seat expansion",
-            "Executive AI briefing where a trigger gives a reason to convene",
-        ],
-        "Trust": [
-            "Committer-base audit \u2192 GHAS trial on the largest active repo set",
-            "Secret-scanning finding as the wedge into a security-owner conversation",
-            "Compliance and audit framing for regulated accounts",
-        ],
-        "Scale": [
-            "Azure DevOps migration assessment with Microsoft co-sell",
-            "Toolchain consolidation economics at renewal",
-            "Partner-delivered migration to remove the services constraint",
-        ],
-    }
+    slide = deck.slide("%s \u00b7 %d accounts" % (play, len(accounts)), eyebrow,
+                       note="Every account in the play is named, with who leads it. The worked "
+                            "example uses GitHub Product Adoption Framework key actions for "
+                            "this play; the rest follow the same sequence.")
 
-    x = MARGIN
-    col_w = Inches(4.02)
-    for play in PLAYS:
-        rows = sorted(by_play[play], key=lambda r: int(r.get("rank") or 999))
-        color = PLAY_COLOR[play]
-        q1 = [r for r in rows if (r.get("tier") or "").startswith(("Tier 1", "Tier 2"))][:4]
-        q2 = [r for r in rows if r not in q1][:3]
+    # --- led-by strip
+    strip_h = Inches(0.66)
+    deck.fill(slide, MARGIN, BODY_TOP, W - 2 * MARGIN, strip_h, PANEL, line=LINE, radius=True)
+    deck.fill(slide, MARGIN, BODY_TOP, Inches(0.07), strip_h, color)
+    deck.text(slide, Emu(int(MARGIN + Inches(0.28))), Emu(int(BODY_TOP + Inches(0.19))),
+              Inches(7.5), Inches(0.32), PLAY_THESIS[play], size=13, color=TEXT)
+    chip_x = float(MARGIN + Inches(8.05))
+    chip_w = Inches(1.32)
+    for tier in (1, 2, 3):
+        deck.text(slide, Emu(int(chip_x)), Emu(int(BODY_TOP + Inches(0.09))),
+                  Emu(int(chip_w)), Inches(0.34), str(counts.get(tier, 0)),
+                  size=19, color=LED_COLOR[tier], bold=True, align=PP_ALIGN.RIGHT,
+                  wrap=False)
+        deck.text(slide, Emu(int(chip_x)), Emu(int(BODY_TOP + Inches(0.42))),
+                  Emu(int(chip_w)), Inches(0.22), LED_LABEL[tier].upper(),
+                  size=9.5, color=MUTED, bold=True, space=True, align=PP_ALIGN.RIGHT)
+        chip_x += float(chip_w + Inches(0.2))
 
-        deck.fill(slide, x, BODY_TOP, col_w, Inches(4.62), PANEL, line=LINE, radius=True)
-        deck.fill(slide, x, BODY_TOP, col_w, Inches(0.06), color)
-        deck.text(slide, Emu(int(x + Inches(0.24))), Emu(int(BODY_TOP + Inches(0.24))),
-                  Emu(int(col_w - Inches(0.48))), Inches(0.3),
-                  "%s \u00b7 %d accounts" % (play.upper(), len(rows)),
-                  size=12, color=color, bold=True, space=True)
-        deck.bullets(slide, Emu(int(x + Inches(0.24))), Emu(int(BODY_TOP + Inches(0.64))),
-                     Emu(int(col_w - Inches(0.48))), motions[play], size=10.5, gap=0.1,
-                     bullet_color=color)
+    panel_top = BODY_TOP + Inches(0.84)
+    panel_h = Inches(4.42)
+    left_w = Inches(5.15)
+    right_x = MARGIN + left_w + Inches(0.2)
+    right_w = W - MARGIN - right_x
 
-        cursor = float(BODY_TOP + Inches(2.34))
-        for label, group in (("Q1 \u00b7 IN MOTION", q1), ("Q2 \u00b7 BUILD", q2)):
-            deck.text(slide, Emu(int(x + Inches(0.24))), Emu(int(cursor)),
-                      Emu(int(col_w - Inches(0.48))), Inches(0.24), label,
-                      size=9, color=MUTED, bold=True, space=True)
-            cursor += Inches(0.28)
-            for account in group:
-                deck.text(slide, Emu(int(x + Inches(0.24))), Emu(int(cursor)),
-                          Emu(int(col_w - Inches(1.4))), Inches(0.26),
-                          truncate(account.get("name", ""), 26), size=10, color=TEXT)
-                deck.text(slide, Emu(int(x + col_w - Inches(1.16))), Emu(int(cursor)),
-                          Inches(0.92), Inches(0.26), "#%d" % int(account.get("rank") or 0),
-                          size=10, color=color, bold=True, align=PP_ALIGN.RIGHT)
-                cursor += Inches(0.26)
-            cursor += Inches(0.12)
-        x += Inches(4.18)
+    # --- worked example
+    target_name = (hero_names or {}).get(play, "")
+    hero = next((a for a in accounts
+                 if a.get("name", "").lower() == str(target_name).lower()), None)
+    if hero is None and accounts:
+        hero = accounts[0]
 
-    deck.footnote(slide, "Motions are drawn from the GitHub Product Adoption Framework key "
-                         "actions for each play. Account sequencing follows the composite rank.")
+    # Land or expand is read from the account's own footprint, not chosen: an account
+    # already consuming the play's product needs the expand sequence.
+    by_id = {a.get("salesforceId"): a for a in (report or {}).get("accounts", []) or []}
+    consumption = ""
+    basis = ""
+    phase = "land"
+    if hero is not None:
+        record = by_id.get(hero.get("salesforceId"), {})
+        consumption = record.get("consumption", "")
+        # playBasis carries the classifier's own sentence, including the printed reason
+        # when a play was seller-asserted over the ladder. Reading it here means the
+        # slide states why this account sits in this play rather than implying it.
+        basis = record.get("playBasis", "") or ""
+        owned = consumption_token(consumption, CONSUMPTION_TOKEN[play])
+        phase = "expand" if (owned or 0) > 0 else "land"
+
+    deck.fill(slide, MARGIN, panel_top, left_w, panel_h, PANEL, line=LINE, radius=True)
+    inner_x = Emu(int(MARGIN + Inches(0.26)))
+    inner_w = Emu(int(left_w - Inches(0.52)))
+    deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.2))), inner_w, Inches(0.24),
+              "HOW I RUN THIS PLAY", size=10, color=color, bold=True, space=True)
+
+    if hero is not None:
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.5))), inner_w, Inches(0.34),
+                  truncate_fit(hero.get("name", ""), int(inner_w), 17), size=17,
+                  color=WHITE, bold=True)
+        meta = "#%d \u00b7 %s \u00b7 %s \u00b7 %s potential" % (
+            int(hero.get("rank") or 0), (hero.get("tier") or "").split(" - ")[0],
+            led_by(hero), money(float(hero.get("potentialArr") or 0)))
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.88))), inner_w, Inches(0.26),
+                  meta, size=11.5, color=color, bold=True)
+        today = "Today: %s" % footprint(consumption)
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(1.16))), inner_w, Inches(0.28),
+                  truncate_fit(today, int(inner_w), 11), size=11, color=MUTED, wrap=False)
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(1.46))), inner_w, Inches(0.44),
+                  "Why this play: %s" % truncate(basis, 95), size=10.5, color=MUTED)
+
+        steps = paf_steps(paf, play, phase)
+        cursor = float(panel_top + Inches(1.94))
+        if steps:
+            for index, action in enumerate(steps, start=1):
+                deck.text(slide, inner_x, Emu(int(cursor)), Inches(0.3), Inches(0.26),
+                          "%d" % index, size=12.5, color=color, bold=True)
+                deck.text(slide, Emu(int(MARGIN + Inches(0.58))), Emu(int(cursor)),
+                          Emu(int(left_w - Inches(0.84))), Inches(0.26),
+                          truncate_fit(action.get("title", ""),
+                                       int(left_w - Inches(0.84)), 12.5),
+                          size=12.5, color=WHITE, bold=True)
+                deck.text(slide, Emu(int(MARGIN + Inches(0.58))),
+                          Emu(int(cursor + Inches(0.26))),
+                          Emu(int(left_w - Inches(0.84))), Inches(0.32),
+                          truncate(action.get("summary", ""), 100), size=10, color=MUTED)
+                cursor += float(Inches(0.62))
+        else:
+            deck.text(slide, inner_x, Emu(int(cursor)), inner_w, Inches(0.6),
+                      "paf.json is missing from the skill, so the key actions for this "
+                      "play cannot be shown. Rebuild it with build_paf.py.",
+                      size=11, color=WARN)
+
+    # --- the rest of the play
+    deck.fill(slide, right_x, panel_top, right_w, panel_h, PANEL, line=LINE, radius=True)
+    rest = [a for a in accounts if a is not hero]
+    deck.text(slide, Emu(int(right_x + Inches(0.26))), Emu(int(panel_top + Inches(0.2))),
+              Emu(int(right_w - Inches(0.52))), Inches(0.24),
+              "THE REST OF THE PLAY \u00b7 %d ACCOUNTS" % len(rest),
+              size=10, color=color, bold=True, space=True)
+
+    col_w = float((right_w - Inches(0.52) - Inches(0.24)) / 2)
+    row_h = float(Inches(0.52))
+    shown = rest[:LIST_ROWS * 2]
+    for index, account in enumerate(shown):
+        col, row = divmod(index, LIST_ROWS)
+        x = float(right_x + Inches(0.26)) + col * (col_w + float(Inches(0.24)))
+        y = float(panel_top + Inches(0.58)) + row * row_h
+        tier = int(account.get("msftTier") or 3)
+        name_w = int(col_w - Inches(0.78))
+        # Truncate the composed string, not the name alone: the rank prefix takes width
+        # too, and a second rendered line is what pushes the row into its neighbour.
+        deck.text(slide, Emu(int(x)), Emu(int(y)), Emu(name_w), Inches(0.26),
+                  truncate_fit("#%d  %s" % (int(account.get("rank") or 0),
+                                            account.get("name", "")), name_w, 12),
+                  size=12, color=TEXT, wrap=False)
+        deck.text(slide, Emu(int(x + col_w - Inches(0.76))), Emu(int(y)),
+                  Inches(0.76), Inches(0.26),
+                  money(float(account.get("potentialArr") or 0)),
+                  size=11.5, color=color, bold=True, align=PP_ALIGN.RIGHT, wrap=False)
+        named = partner_names(partner_map, account)
+        detail = named[0] if named else ("partner to source" if tier == 2 else "no partner")
+        if tier == 1:
+            detail = account.get("msftOwner") or "Microsoft owner named"
+        detail_w = int(col_w - Inches(0.1))
+        deck.text(slide, Emu(int(x)), Emu(int(y + Inches(0.25))),
+                  Emu(detail_w), Inches(0.24),
+                  truncate_fit("%s \u00b7 %s" % (LED_LABEL[tier], detail), detail_w, 10),
+                  size=10, color=LED_COLOR[tier], wrap=False)
+    if len(rest) > len(shown):
+        deck.text(slide, Emu(int(right_x + Inches(0.26))),
+                  Emu(int(panel_top + panel_h - Inches(0.34))),
+                  Emu(int(right_w - Inches(0.52))), Inches(0.24),
+                  "+%d more in the evidence workbook" % (len(rest) - len(shown)),
+                  size=10, color=MUTED)
+
+    deck.footnote(slide, "Led by: a named Microsoft owner is Microsoft led, a TPID alone is "
+                         "partner led, neither is seller led. The worked example uses the "
+                         "GitHub Product Adoption Framework %s key actions for %s."
+                  % (phase, PLAY_PRODUCT[play]))
     return slide
 
 
@@ -739,14 +925,14 @@ def slide_9_msft_partners(deck, focus, partners, cosell=None):
 
     deck.table(slide, MARGIN, Inches(3.42), W - 2 * MARGIN,
                ["Account", "Play", "Rank", "Tier", "Microsoft route", "Partner"],
-               [2.7, 1.35, 0.85, 1.0, 2.6, 3.6], rows, row_h=0.36, size=10.5, colors=colors)
+               [2.7, 1.35, 0.85, 1.0, 2.6, 3.6], rows, row_h=0.36, size=12, colors=colors)
 
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.42),
               "How I use it: tier 1 gets a joint account-team introduction before any "
               "GitHub-only outreach. Tier 2 gets a partner attached to the migration before "
               "the technical win, so delivery is never the reason a deal slips. Tier 3 is run "
               "direct and is not counted as Microsoft coverage.",
-              size=11.5, color=MUTED)
+              size=12, color=MUTED)
     deck.footnote(slide, "Tier from Salesforce MsftOwnerName__c plus MSFT_All_TPIDs__c / "
                          "MS_Sales_TPID_Best_Match__c. Partner relationships from Salesforce "
                          "Partner records. Seller-asserted tiers are labelled as such.")
@@ -885,9 +1071,9 @@ def slide_11_asks(deck, coverage, focus, learnings, cosell=None):
     ]
 
     deck.panel(slide, MARGIN, BODY_TOP, Inches(6.0), "FROM LEADERSHIP", leadership,
-               ACCENT, size=11.5, gap=0.2, min_h=Inches(4.5))
+               ACCENT, size=12.5, gap=0.2, min_h=Inches(4.5))
     deck.panel(slide, Inches(6.95), BODY_TOP, Inches(6.0), "FROM CROSS-FUNCTIONAL PARTNERS",
-               xfn, PLAY_COLOR["Scale"], size=11.5, gap=0.2, min_h=Inches(4.5))
+               xfn, PLAY_COLOR["Scale"], size=12.5, gap=0.2, min_h=Inches(4.5))
 
     b1_gap = bucket_of(coverage, "Bucket 1").get("h1Gap")
     b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
@@ -951,9 +1137,13 @@ def main():
     slide_3_key_deals(deck, focus, crm, report)
     slide_4_key_accounts(deck, focus)
     slide_5_portfolio(deck, focus, coverage)
+    paf = load(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
+               "paf.json", {})
+    hero_names = load(run_dir, PAF_ACCOUNTS_FILE, {})
+    for play, eyebrow in zip(PLAYS, ("Q2 \u00b7 Innovate", "Q2 \u00b7 Trust", "Q2 \u00b7 Scale")):
+        slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names)
     slide_6_the_number(deck, potential, focus, coverage)
     slide_7_coverage(deck, coverage, focus)
-    slide_8_how(deck, focus, report)
     slide_9_msft_partners(deck, focus, partners, cosell)
     slide_10_working(deck, learnings)
     slide_11_asks(deck, coverage, focus, learnings, cosell)

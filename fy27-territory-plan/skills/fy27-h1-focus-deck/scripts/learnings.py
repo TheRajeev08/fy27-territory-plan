@@ -64,16 +64,9 @@ def build(focus, coverage, crm):
     ghe = by_product.get("GHE", {})
     ghas = by_product.get("GHAS", {})
 
+    # Pipeline hygiene is tracked as a live ask to deal desk on the asks slide, not as an
+    # H2 retrospective learning, so it is deliberately not carried here.
     learnings = [
-        {
-            "headline": "Pipeline hygiene cost us forecast credibility",
-            "detail": "{count} open opportunities worth {value} in the focus set carry "
-                      "close dates already in the past. They inflate coverage without "
-                      "being forecastable.".format(count=stale_count, value=money(stale_value)),
-            "carryForward": "Close-date discipline weekly; anything past date is "
-                            "re-dated with a reason or closed out before it is counted.",
-            "evidence": "crm-context.json: {} stale opportunities".format(stale_count),
-        },
         {
             "headline": "GHAS is a story we told, not a motion we ran",
             "detail": "Only {ghas} of {total} focus accounts consume GHAS today. The H2 gap "

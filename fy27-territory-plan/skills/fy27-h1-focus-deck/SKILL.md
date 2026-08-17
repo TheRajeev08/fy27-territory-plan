@@ -1,6 +1,6 @@
 ---
 name: fy27-h1-focus-deck
-description: "Build the FY27 H1 focus-accounts leadership presentation from a completed territory plan run. Selects 30-50 focus accounts ranked on potential ARR, live open pipeline, active communication and dated live triggers; sizes the opportunity in AIU, Copilot seats, and GHE+GHAS seats/ACR/ARR; scores quota coverage per bucket against the teammate's targets; grounds the execution plan in GitHub's Product Adoption Framework; and renders a 10-slide leadership deck, a 21-slide evidence deck and an evidence workbook. Use for 'H1 focus accounts', 'build my territory presentation', 'which 40 accounts for the half', 'focus account deck', 'leadership deck', 'presentation for my sales leader', 'how do I make my number', or 'H1 plan for FY27'."
+description: "Build the FY27 H1 focus-accounts leadership presentation from a completed territory plan run. Selects 30-50 focus accounts ranked on potential ARR, live open pipeline, active communication and dated live triggers; sizes the opportunity in AIU, Copilot seats, and GHE+GHAS seats/ACR/ARR; scores quota coverage per bucket against the teammate's targets; grounds the execution plan in GitHub's Product Adoption Framework; and renders a 13-slide leadership deck, a 21-slide evidence deck and an evidence workbook. Use for 'H1 focus accounts', 'build my territory presentation', 'which 40 accounts for the half', 'focus account deck', 'leadership deck', 'presentation for my sales leader', 'how do I make my number', or 'H1 plan for FY27'."
 ---
 
 # FY27 H1 Focus Accounts — Leadership Presentation
@@ -388,7 +388,7 @@ Four guarantees, each deliberate:
   on the identical scoring curve as an un-overridden one.
 * **Seller-sourced pipeline is visually distinct on the deck.** Leadership will look for these
   numbers in Salesforce. If they cannot find them and the deck did not say so, the deck loses
-  credibility. Slide 6 footnotes the amount and the account.
+  credibility. Slide 9 footnotes the amount and the account.
 
 Record any genuine assumption under an `assumption` key alongside `reason`, so the deck can be
 defended line by line and the assumption can be reverted to see what moves.
@@ -424,7 +424,7 @@ run's own records. Nothing here is authored in chat.
 ### 10. Build the decks and the evidence workbook
 
 ```bash
-# 11-slide executive cut - what gets presented in a 30-minute slot
+# 13-slide executive cut - what gets presented in a 30-minute slot
 python3 SCRIPTS/exec_deck.py "<RUN>" "<RUN>/fy27-h1-leadership.pptx"
 
 # 21-slide evidence pack - the detail brought as backup
@@ -436,7 +436,7 @@ python3 SCRIPTS/focus_workbook.py "<RUN>/fy27-territory-plan.json" "<RUN>/potent
 ```
 
 `exec_deck.py` imports its `Deck` class and theme from `deck.py`, so both decks stay visually
-identical and only one file owns rendering behaviour. Its eleven slides map to the seven
+identical and only one file owns rendering behaviour. Its thirteen slides map to the seven
 questions:
 
 | # | Slide | Question |
@@ -446,15 +446,45 @@ questions:
 | 3 | Key deals in play — deal, size, stage, where it stands | opener |
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
 | 5 | Portfolio by play, with TPID flags | Q2 |
-| 6 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 7 | Coverage — H1 target vs what already covers it | Q4 |
-| 8 | How I get there — motions and account sequencing | **Q4** |
-| 9 | Microsoft overlap and partner leverage | Q5 |
-| 10 | What's working, what's not | Q6 |
-| 11 | Asks — leadership and cross-functional | Q7 |
+| 6 | Innovate — every account, who leads it, one worked in PAF detail | Q2 |
+| 7 | Trust — every account, who leads it, one worked in PAF detail | Q2 |
+| 8 | Scale — every account, who leads it, one worked in PAF detail | Q2 |
+| 9 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
+| 10 | Coverage — H1 target vs what already covers it | Q4 |
+| 11 | Microsoft overlap and partner leverage | Q5 |
+| 12 | What's working, what's not | Q6 |
+| 13 | Asks — leadership and cross-functional | Q7 |
 
-Question 2 is carried by slides 5 and 8 rather than a slide of its own, because plays only
-matter in terms of which accounts and which motions.
+**Slides 6–8 are the answer to "how".** Slide 5 stays the one-page overview; each play then
+gets a slide that names *every* focus account in it, so nothing is summarised away, and works
+one account through the play end to end.
+
+**Led by is derived, never typed.** A TPID plus a named Microsoft owner is *Microsoft led*; a
+TPID alone is *Partner led*, because a TPID account needs a partner even where none is mapped
+yet, and those render `partner to source` — which is exactly the partnerships ask on slide 13.
+Neither is *Seller led*.
+
+**The PAF panel reads `paf.json`, it does not paraphrase it.** Step titles and summaries come
+from the framework's key actions for that play. Land or expand is chosen from the account's own
+`consumption` string — an account already consuming the play's product gets the expand sequence
+— so the phase is observed, not asserted. If `paf.json` is missing the panel prints a visible
+warning instead of inventing motions.
+
+**The worked account per play defaults to rank, and is overridable per run.** Slides 6-8 each
+detail their highest-ranked account. To illustrate a play with a different account, drop a
+`paf-accounts.json` in the run directory:
+
+```json
+{ "Innovate": "<account name>", "Trust": "<account name>", "Scale": "<account name>" }
+```
+
+A name that does not match an account in that play is ignored and the rank default is used, so
+a stale entry degrades rather than blanking the panel. No account name is baked into the skill.
+
+**Type floor for screen sharing.** Body text and account lists render at 12pt, PAF step titles
+at 12.5pt, table bodies at 12pt. Larger type buys fewer characters per cell, so strings are
+truncated to fit rather than allowed to wrap into a collision; single-line cells set
+`wrap=False` so `verify_deck.py`'s width check actually fires on them.
 
 **Slide 3 is scoped to the whole book, not the focus 40.** Every other slide counts focus
 accounts only. A live deal is a live deal wherever its account ranks, and because ranking
@@ -465,7 +495,7 @@ so the two slides cannot be read as contradicting each other.
 
 **A negative uncovered gap is rendered as language, not a minus sign.** Once dated pipeline
 exceeds the remaining gap, the gap goes negative; printing "$-16K uncovered" reads as
-a hole when it is a surplus. Slides 7 and 11 resolve the sign into words and, when a bucket
+a hole when it is a surplus. Slides 10 and 13 resolve the sign into words and, when a bucket
 only nets out because one product over-covers, say so explicitly rather than reporting
 comfort.
 
@@ -481,7 +511,7 @@ pipeline`; Bucket 2 is the run-rate carry alone. Presenting both as one blended 
 hides the fact that they fail in completely different ways — Bucket 1 by a deal slipping,
 Bucket 2 by consumption churning.
 
-**No slide carries modelled potential ARR.** Sizing is presented on slide 5 in units that can
+**No slide carries modelled potential ARR.** Sizing is presented on slide 9 in units that can
 be verified — seats, active committers, invoiced credits — and every dollar figure elsewhere is
 dated pipeline, a set target, or invoiced attainment. Potential ARR still drives *ranking*
 (`W_STAGE1` 0.65, `W_STAGE2` 0.40), because it is a reasonable relative ordering signal; it is
@@ -512,7 +542,7 @@ line with its rate and basis, so any figure on a slide can be traced in a single
 
 Give the teammate:
 
-- both deck paths — the 10-slide leadership cut and the 21-slide evidence pack
+- both deck paths — the 13-slide leadership cut and the 21-slide evidence pack
 - the account/tier/play mix, and total potential ARR against current ARR
 - **the coverage read per bucket**, because that is what leadership will push on
 - how many accounts carry a dated trigger, and how many do not
@@ -522,7 +552,7 @@ Offer to preview the deck by opening the `powerpoint` canvas on the generated fi
 
 ## Execution guidance comes from PAF
 
-The Q4 slides are grounded in real **Product Adoption Framework** key actions, baked into
+The per-play slides (6-8) are grounded in real **Product Adoption Framework** key actions, baked into
 `paf.json` at build time by `build_paf.py`. Each play gets a **land** sequence for greenfield
 accounts and an **expand** sequence for accounts with a footprint, and the appendix carries the
 real resource links.
