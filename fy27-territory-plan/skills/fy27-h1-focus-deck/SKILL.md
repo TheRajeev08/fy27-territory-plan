@@ -670,6 +670,51 @@ python3 SCRIPTS/build_paf.py   # requires gh auth; writes paf.json
 
 Do not invent adoption steps in chat. If a key action is not in `paf.json`, it is not in the deck.
 
+### Grounding a play in the real conversation
+
+The worked-example panel on slides 6-8 leads with what has actually been said to that account,
+not with the generic sequence. Gather it into `<RUN>/conversations.json` before rendering:
+
+```
+heroes: { "<account name>": {
+  source: "gong" | "override",   sourceNote, lastTouch, callCount, participants,
+  agreed, blocker, committed,    strategic,
+  pafActions: ["<paf.json action id>", ...],
+  evidence: [{callName, date, id}]
+} }
+```
+
+Gathering rules, each learned the hard way:
+
+- **Walk the hierarchy, and search by name.** Gong files calls against whichever account record
+  the meeting was booked under. One account in testing had **three unlinked Salesforce records**
+  plus a partner-filed migration call, and `get_account_hierarchy` returned only itself. Querying
+  the focus account's ID alone returns a partial history.
+- **A missing call record is not a missing conversation.** An account can have no Gong calls and no
+  notes under its own record while its history sits under the account the opportunity was filed
+  against. Where there is genuinely no call, set `source: "override"` and the panel says
+  "no call record" rather than implying contact.
+- **`pafActions` answers the blocker.** Ids resolve across both phases, because an account
+  mid-rollout may still need a land-phase action it skipped. An unknown id is skipped, not
+  rendered blank. Omit `pafActions` and the play's generic sequence is used.
+- Extract close to source wording. `agreed`/`blocker`/`committed` are rendered verbatim; do not
+  compose slide sentences in chat.
+
+`strategic` and `sourceNote` go to the speaker notes along with the play basis, which moved off
+the panel to make room.
+
+### Seller-authored asks
+
+Slide 11 computes asks from the numbers. Asks that are not derivable — a competitor's packaging,
+a partner's motivation — go in `<RUN>/asks.json` under `leadership`, `partnerships` and
+`microsoft`, and render ahead of the computed ones.
+
+The columns must clear the commitment bar, so computed asks are **trimmed to fit and the seller's
+never are**. Whatever is trimmed is written into the speaker notes and the footnote says so.
+
+Both files stay in the run directory. They name customers and carry competitive intelligence, so
+**neither is ever published with the plugin**.
+
 ## Guardrails
 
 - **Potential is not pipeline.** It is an opportunity size derived from product signals, to be

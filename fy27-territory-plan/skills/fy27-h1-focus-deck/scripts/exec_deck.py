@@ -57,6 +57,18 @@ LED_COLOR = {1: WHITE, 2: WARN, 3: MUTED}
 # matches an account in that play. No account name is hard-coded into the skill.
 PAF_ACCOUNTS_FILE = "paf-accounts.json"
 
+# Gathered conversation history for the worked-example accounts, and the PAF key actions
+# selected to answer what that account actually said. Both are seller/run data rather than
+# skill data: they name customers and quote their objections, so they live in the run
+# directory and are never published with the plugin. Absent the file, the panel falls back
+# to the generic key-action sequence for the play, which is what it always did.
+CONVERSATIONS_FILE = "conversations.json"
+
+# Seller-authored strategic asks that are not derivable from the data. Same reasoning:
+# they are one seller's asks, so they are read from the run directory rather than
+# hard-coded. Absent the file, slide 11 renders exactly the computed asks it always did.
+ASKS_FILE = "asks.json"
+
 # The product each play sells, and the token that reports it in the account's
 # consumption string ("GHE 2 + VS bundle 0; CfB 76; ... GHAS 0").
 PLAY_PRODUCT = {"Innovate": "Copilot", "Trust": "GHAS", "Scale": "GHE"}
@@ -130,6 +142,32 @@ def consumption_token(text, token):
 def paf_steps(paf, play, phase, limit=PAF_STEPS):
     actions = ((paf or {}).get("plays", {}).get(play, {}) or {}).get(phase, []) or []
     return actions[:limit]
+
+
+def paf_by_id(paf, play):
+    """Every key action for a play, keyed by id, across both phases.
+
+    Selecting actions by id lets the gathered evidence pick the action that answers the
+    account's stated blocker, which can sit in either phase. An account mid-rollout may
+    still need a land-phase action it skipped.
+    """
+    found = {}
+    for phase in ("land", "expand"):
+        for action in ((paf or {}).get("plays", {}).get(play, {}) or {}).get(phase, []) or []:
+            if action.get("id"):
+                found[action["id"]] = action
+    return found
+
+
+def selected_paf(paf, play, ids, phase):
+    """Resolve gathered action ids against paf.json, falling back to the generic sequence.
+
+    An id that no longer exists in paf.json is skipped rather than rendered as a blank
+    row: paf.json is rebuilt from the knowledge base and ids can legitimately disappear.
+    """
+    catalog = paf_by_id(paf, play)
+    chosen = [catalog[i] for i in (ids or []) if i in catalog]
+    return chosen or paf_steps(paf, play, phase, limit=3)
 
 
 # The consumption string is internal telemetry shorthand ("GHE 2 + VS bundle 0; CfB 0;
@@ -686,12 +724,19 @@ def slide_7_coverage(deck, coverage, focus):
     return slide
 
 
-def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=None):
+def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=None,
+               conversations=None):
     """One slide per play: who leads every account, and how one of them gets run.
 
     The worked example is rendered from paf.json key actions, so the framework claim in
     the footnote is sourced rather than asserted. If paf.json is absent the panel says so
     instead of substituting invented motions.
+
+    Where gathered conversation history exists for the worked account, the panel leads
+    with what has actually been said - agreed, open, committed - and the key actions are
+    the ones selected to answer that account's stated blocker rather than the generic
+    sequence. The play basis moves to the speaker notes, because the conversation says
+    more about why the account sits here than the classifier's sentence does.
     """
     accounts = sorted([a for a in focus.get("accounts", []) if a.get("play") == play],
                       key=lambda r: int(r.get("rank") or 999))
@@ -753,6 +798,23 @@ def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=
         owned = consumption_token(consumption, CONSUMPTION_TOKEN[play])
         phase = "expand" if (owned or 0) > 0 else "land"
 
+    # The classifier's play basis moves off the panel into the speaker notes. The
+    # conversation section now says more about why the account sits here, but the basis
+    # is still the auditable reason and should not be lost. The gathering note goes with
+    # it, because where the history was found is itself a finding.
+    hero_convo = ((conversations or {}).get("heroes", {}) or {}).get(
+        (hero or {}).get("name", "")) or {}
+    extra = []
+    if basis:
+        extra.append("Why %s sits in %s: %s" % (hero.get("name", ""), play, basis))
+    if hero_convo.get("sourceNote"):
+        extra.append("Conversation source: %s" % hero_convo["sourceNote"])
+    if hero_convo.get("strategic"):
+        extra.append(hero_convo["strategic"])
+    if extra:
+        deck.notes = [(s, "\n\n".join([n] + extra) if s is slide else n)
+                      for s, n in deck.notes]
+
     deck.fill(slide, MARGIN, panel_top, left_w, panel_h, PANEL, line=LINE, radius=True)
     inner_x = Emu(int(MARGIN + Inches(0.26)))
     inner_w = Emu(int(left_w - Inches(0.52)))
@@ -760,36 +822,78 @@ def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=
               "HOW I RUN THIS PLAY", size=10, color=color, bold=True, space=True)
 
     if hero is not None:
-        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.5))), inner_w, Inches(0.34),
-                  truncate_fit(hero.get("name", ""), int(inner_w), 17), size=17,
+        convo = ((conversations or {}).get("heroes", {}) or {}).get(hero.get("name", "")) or {}
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.38))), inner_w, Inches(0.30),
+                  truncate_fit(hero.get("name", ""), int(inner_w), 16), size=16,
                   color=WHITE, bold=True)
         meta = "#%d \u00b7 %s \u00b7 %s \u00b7 %s potential" % (
             int(hero.get("rank") or 0), (hero.get("tier") or "").split(" - ")[0],
             led_by(hero), money(float(hero.get("potentialArr") or 0)))
-        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.88))), inner_w, Inches(0.26),
-                  meta, size=11.5, color=color, bold=True)
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.70))), inner_w, Inches(0.22),
+                  meta, size=11, color=color, bold=True, wrap=False)
         today = "Today: %s" % footprint(consumption)
-        deck.text(slide, inner_x, Emu(int(panel_top + Inches(1.16))), inner_w, Inches(0.28),
-                  truncate_fit(today, int(inner_w), 11), size=11, color=MUTED, wrap=False)
-        deck.text(slide, inner_x, Emu(int(panel_top + Inches(1.46))), inner_w, Inches(0.44),
-                  "Why this play: %s" % truncate(basis, 95), size=10.5, color=MUTED)
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.93))), inner_w, Inches(0.22),
+                  truncate_fit(today, int(inner_w), 10), size=10, color=MUTED,
+                  wrap=False)
 
-        steps = paf_steps(paf, play, phase)
-        cursor = float(panel_top + Inches(1.94))
+        # --- where the conversation stands
+        # Sourced from gathered call history. The header states the last touch and the
+        # call count so a reader can tell a live conversation from a stale one, and says
+        # "no call record" outright when there is none rather than implying contact.
+        if convo:
+            if convo.get("source") == "gong" and convo.get("lastTouch"):
+                stamp = "LAST TOUCH %s \u00b7 %d CALL%s" % (
+                    convo.get("lastTouch"), int(convo.get("callCount") or 0),
+                    "" if int(convo.get("callCount") or 0) == 1 else "S")
+            else:
+                stamp = "NO CALL RECORD \u00b7 FROM THE OPPORTUNITY"
+            head = "WHERE THE CONVERSATION STANDS \u00b7 %s" % stamp
+        else:
+            head = "WHERE THE CONVERSATION STANDS"
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(1.19))), inner_w, Inches(0.20),
+                  truncate_fit(head, int(inner_w), 9), size=9, color=color, bold=True,
+                  space=True, wrap=False)
+
+        cursor = float(panel_top + Inches(1.41))
+        if convo:
+            for label, key in (("Agreed", "agreed"), ("Open", "blocker"),
+                               ("Committed", "committed")):
+                value = convo.get(key)
+                if not value:
+                    continue
+                deck.text(slide, inner_x, Emu(int(cursor)), Inches(0.70), Inches(0.20),
+                          label, size=9.5, color=color, bold=True, wrap=False)
+                deck.text(slide, Emu(int(MARGIN + Inches(0.98))), Emu(int(cursor)),
+                          Emu(int(left_w - Inches(1.24))), Inches(0.49),
+                          truncate(value, 168), size=9.5, color=TEXT)
+                cursor += float(Inches(0.51))
+        else:
+            deck.text(slide, inner_x, Emu(int(cursor)), inner_w, Inches(0.49),
+                      "No gathered conversation history for this account. Add it to "
+                      "conversations.json in the run directory.", size=9.5, color=MUTED)
+            cursor += float(Inches(0.51))
+
+        # --- what gets them fully onboarded
+        steps = selected_paf(paf, play, convo.get("pafActions"), phase)
+        onboard_top = max(cursor + float(Inches(0.06)), float(panel_top + Inches(2.98)))
+        deck.text(slide, inner_x, Emu(int(onboard_top)), inner_w, Inches(0.20),
+                  "WHAT GETS THEM FULLY ONBOARDED \u00b7 PAF", size=9, color=color,
+                  bold=True, space=True, wrap=False)
+        cursor = onboard_top + float(Inches(0.22))
         if steps:
             for index, action in enumerate(steps, start=1):
-                deck.text(slide, inner_x, Emu(int(cursor)), Inches(0.3), Inches(0.26),
-                          "%d" % index, size=12.5, color=color, bold=True)
+                deck.text(slide, inner_x, Emu(int(cursor)), Inches(0.3), Inches(0.20),
+                          "%d" % index, size=11, color=color, bold=True, wrap=False)
+                title_w = int(left_w - Inches(0.84))
                 deck.text(slide, Emu(int(MARGIN + Inches(0.58))), Emu(int(cursor)),
-                          Emu(int(left_w - Inches(0.84))), Inches(0.26),
-                          truncate_fit(action.get("title", ""),
-                                       int(left_w - Inches(0.84)), 12.5),
-                          size=12.5, color=WHITE, bold=True)
+                          Emu(title_w), Inches(0.20),
+                          truncate_fit(action.get("title", ""), title_w, 11),
+                          size=11, color=WHITE, bold=True, wrap=False)
                 deck.text(slide, Emu(int(MARGIN + Inches(0.58))),
-                          Emu(int(cursor + Inches(0.26))),
-                          Emu(int(left_w - Inches(0.84))), Inches(0.32),
-                          truncate(action.get("summary", ""), 100), size=10, color=MUTED)
-                cursor += float(Inches(0.62))
+                          Emu(int(cursor + Inches(0.20))), Emu(title_w), Inches(0.20),
+                          truncate_fit(action.get("summary", ""), title_w, 9),
+                          size=9, color=MUTED, wrap=False)
+                cursor += float(Inches(0.40))
         else:
             deck.text(slide, inner_x, Emu(int(cursor)), inner_w, Inches(0.6),
                       "paf.json is missing from the skill, so the key actions for this "
@@ -972,10 +1076,11 @@ def slide_10_working(deck, learnings):
     return slide
 
 
-def slide_11_asks(deck, coverage, focus, learnings, cosell=None):
+def slide_11_asks(deck, coverage, focus, learnings, cosell=None, asks=None):
     slide = deck.slide("Asks", "Q7 \u00b7 Leadership and cross-functional",
-                       note="Each ask is tied to a specific number on an earlier slide, so it is "
-                            "answerable rather than aspirational.")
+                       note="Seller-authored strategic asks lead each column; the asks "
+                            "below them are each tied to a specific number on an earlier "
+                            "slide, so they are answerable rather than aspirational.")
     facts = learnings.get("facts", {})
     products = {p.get("product"): p for p in coverage.get("products", []) or []}
     ghe = products.get("GHE", {})
@@ -1081,10 +1186,52 @@ def slide_11_asks(deck, coverage, focus, learnings, cosell=None):
         % (facts.get("staleCount", 0), money(facts.get("staleValue"))),
     ]
 
-    deck.panel(slide, MARGIN, BODY_TOP, Inches(6.0), "FROM LEADERSHIP", leadership,
-               ACCENT, size=12.5, gap=0.2, min_h=Inches(4.5))
-    deck.panel(slide, Inches(6.95), BODY_TOP, Inches(6.0), "FROM CROSS-FUNCTIONAL PARTNERS",
-               xfn, PLAY_COLOR["Scale"], size=12.5, gap=0.2, min_h=Inches(4.5))
+    # Seller-authored asks lead each column. They are not derivable from the data - a
+    # competitor's packaging or a partner's motivation does not appear in a SuperDash
+    # export - so they are stated from asks.json rather than computed. Absent the file,
+    # both columns render exactly the computed asks they always did.
+    seller = asks or {}
+    lead_seller = list(seller.get("leadership") or [])
+    xfn_seller = ([("Partnerships: %s" % a) for a in (seller.get("partnerships") or [])]
+                  + [("Microsoft: %s" % a) for a in (seller.get("microsoft") or [])])
+
+    # The panel has to clear the commitment bar at 6.4in, so the two lists cannot both
+    # grow unbounded. Trim the computed asks - never the seller's - until the taller
+    # column fits. A silently off-slide ask is worse than an ask that moves to the notes.
+    panel_w = Inches(6.0)
+    inner_w = panel_w - Inches(0.52)
+    max_body = Inches(6.3) - BODY_TOP - Inches(1.06)
+    size, gap = 11.5, 0.18
+
+    def fit(fixed, extra):
+        items = list(fixed) + list(extra)
+        while len(items) > len(fixed) and deck.bullet_height(
+                inner_w, items, size=size, gap=gap) > max_body:
+            items = items[:-1]
+        return items
+
+    dropped_items = []
+    kept_lead = fit(lead_seller, leadership)
+    kept_xfn = fit(xfn_seller, xfn)
+    dropped_items += leadership[len(kept_lead) - len(lead_seller):]
+    dropped_items += xfn[len(kept_xfn) - len(xfn_seller):]
+    leadership, xfn = kept_lead, kept_xfn
+
+    deck.panel(slide, MARGIN, BODY_TOP, panel_w, "FROM LEADERSHIP", leadership,
+               ACCENT, size=size, gap=gap, min_h=Inches(4.5))
+    deck.panel(slide, Inches(6.95), BODY_TOP, panel_w,
+               "FROM PARTNERSHIPS AND MICROSOFT",
+               xfn, PLAY_COLOR["Scale"], size=size, gap=gap, min_h=Inches(4.5))
+    if dropped_items:
+        # Say where they went, and actually put them there. A slide that claims an ask
+        # is recorded somewhere it is not is worse than one that drops it silently.
+        deck.footnote(slide, "%d further data-derived ask%s did not fit this slide and "
+                             "%s in the speaker notes."
+                      % (len(dropped_items), "" if len(dropped_items) == 1 else "s",
+                         "is" if len(dropped_items) == 1 else "are"))
+        deck.notes = [(s, "\n\n".join([n, "Asks that did not fit the slide:"]
+                                      + ["- %s" % d for d in dropped_items])
+                       if s is slide else n) for s, n in deck.notes]
 
     b1_gap = bucket_of(coverage, "Bucket 1").get("h1Gap")
     b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
@@ -1151,13 +1298,15 @@ def main():
     paf = load(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
                "paf.json", {})
     hero_names = load(run_dir, PAF_ACCOUNTS_FILE, {})
+    conversations = load(run_dir, CONVERSATIONS_FILE, {})
     for play, eyebrow in zip(PLAYS, ("Q2 \u00b7 Innovate", "Q2 \u00b7 Trust", "Q2 \u00b7 Scale")):
-        slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names)
+        slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names,
+                   conversations)
     slide_6_the_number(deck, potential, focus, coverage)
     slide_7_coverage(deck, coverage, focus)
     slide_9_msft_partners(deck, focus, partners, cosell)
     slide_10_working(deck, learnings)
-    slide_11_asks(deck, coverage, focus, learnings, cosell)
+    slide_11_asks(deck, coverage, focus, learnings, cosell, load(run_dir, ASKS_FILE, {}))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     deck.save(out_path)
