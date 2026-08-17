@@ -54,7 +54,8 @@ def fiscal_h1(as_of):
     return "FY%d" % (fy % 100), h1[0], h1[1], h1[2]
 
 
-ACCOUNT_QUERY = """SELECT Id, Name, Industry, MSFT_TPID__c, MSFT_All_TPIDs__c, MS_Sales_TPID_Best_Match__c
+ACCOUNT_QUERY = """SELECT Id, Name, Industry, MSFT_TPID__c, MSFT_All_TPIDs__c, MS_Sales_TPID_Best_Match__c,
+MsftOwnerName__c, MsftOwnerRole__c, Microsoft_Involvement__c
 FROM Account WHERE Id IN (%s)"""
 
 OPPORTUNITY_QUERY = """SELECT Id, Name, AccountId, StageName, Amount, CloseDate, Type,
@@ -146,6 +147,37 @@ def emit_queries(report):
     return ids, out
 
 
+MSFT_TIERS = {
+    1: "Co-sell led",
+    2: "Partner led",
+    3: "Direct",
+}
+
+
+def msft_tier(has_tpid, owner_name):
+    """Three tiers of Microsoft engagement, replacing a bare TPID boolean.
+
+    A TPID on its own is close to the default state of this book - 142 of 251 accounts
+    carry one - so reporting "has TPID" as Microsoft overlap overstates co-sell badly.
+    A *named* Microsoft seller is the scarce signal: only 13 accounts in the book have
+    one, and every one of those also carries a TPID.
+
+      tier 1  TPID + named AM/Specialist  -> a person on the Microsoft side to work with
+      tier 2  TPID only                   -> partner-led, no named Microsoft counterpart
+      tier 3  neither                      -> GitHub direct
+
+    Tiering keys off the *presence* of a named owner rather than parsing the role,
+    because MsftOwnerRole__c is free text and dirty: it holds "AE", "ACCOUNT EXECUTIVE",
+    "Account Exective", and on one record an email address. Role is carried for display
+    only and never drives the tier.
+    """
+    if has_tpid and owner_name:
+        return 1
+    if has_tpid:
+        return 2
+    return 3
+
+
 def split_tpids(*values):
     """MSFT_All_TPIDs__c is a comma-joined string; the others are single ids."""
     found = []
@@ -191,6 +223,8 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
             rec["msftOverlap"] = False
             rec["suppressedTpids"] = rec.get("tpids", [])
             rec["tpids"] = []
+            rec["msftTier"] = 3
+            rec["msftTierSource"] = "seller"
             rec.setdefault("overrides", []).append(
                 {"field": "msftOverlap", "value": False, "reason": reason})
             summary["overlapCleared"] += 1
@@ -203,6 +237,8 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
             rec["msftOverlapSource"] = "seller"
             asserted_tpid = record.get("tpid")
             rec["tpids"] = [asserted_tpid] if asserted_tpid else []
+            rec["msftTier"] = msft_tier(True, rec.get("msftOwner"))
+            rec["msftTierSource"] = "seller"
             rec.setdefault("overrides", []).append(
                 {"field": "msftOverlap", "value": True, "reason": reason})
             summary["overlapAsserted"] = summary.get("overlapAsserted", 0) + 1
@@ -213,6 +249,20 @@ def apply_overrides(accounts, ov, rates, h1_start, h1_end):
             # signal yet, so they cannot earn a rank.
             rec["msftCoSell"] = True
             rec["msftCoSellReason"] = record.get("coSellReason") or reason
+            # A seller working an account jointly with a named Microsoft counterpart is
+            # tier 1 by definition, whatever Salesforce holds. The tier is asserted, the
+            # *source* is recorded as seller, and the Salesforce gap is kept visible so
+            # it can be raised as a data-quality fix rather than quietly papered over.
+            rec["msftTier"] = 1
+            rec["msftTierSource"] = "seller"
+            gaps = []
+            if not rec.get("tpids"):
+                gaps.append("no TPID on the Salesforce record")
+            if not rec.get("msftOwner"):
+                gaps.append("no Microsoft owner named on the Salesforce record")
+            if gaps:
+                rec["msftDataGap"] = " and ".join(gaps)
+                summary["msftDataGaps"] = summary.get("msftDataGaps", 0) + 1
 
         # A Salesforce opportunity filed against the wrong account is not pipeline for
         # that account. Suppression removes it and backs its value out of the H1
@@ -290,11 +340,18 @@ def ingest(raw, as_of, ov=None, rates=None):
             pick(row, "MSFT_All_TPIDs__c"),
             pick(row, "MS_Sales_TPID_Best_Match__c"),
         )
+        owner = str(pick(row, "MsftOwnerName__c") or "").strip()
+        role = str(pick(row, "MsftOwnerRole__c") or "").strip()
         accounts[str(sid)] = {
             "name": pick(row, "Name", "name") or "",
             "industry": pick(row, "Industry", "industry") or "",
             "tpids": tpids,
             "msftOverlap": bool(tpids),
+            "msftOwner": owner,
+            "msftOwnerRole": role,
+            "msftInvolvement": str(pick(row, "Microsoft_Involvement__c") or "").strip(),
+            "msftTier": msft_tier(bool(tpids), owner),
+            "msftTierSource": "salesforce" if (tpids or owner) else "",
             "openPipeline": [],
             "h1PipelineValue": 0.0,
             "q1PipelineValue": 0.0,
@@ -311,6 +368,8 @@ def ingest(raw, as_of, ov=None, rates=None):
             continue
         rec = accounts.setdefault(str(sid), {
             "name": "", "tpids": [], "msftOverlap": False, "openPipeline": [],
+            "msftOwner": "", "msftOwnerRole": "", "msftInvolvement": "",
+            "msftTier": 3, "msftTierSource": "",
             "h1PipelineValue": 0.0, "q1PipelineValue": 0.0, "h1RenewalValue": 0.0,
             "stalePipelineValue": 0.0,
             "bestStage": "", "bestStageWeight": 0.0,

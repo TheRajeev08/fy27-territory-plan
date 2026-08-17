@@ -78,7 +78,7 @@ def slide_1_scorecard(deck, coverage, focus):
     b2 = bucket_of(coverage, "Bucket 2")
 
     deck.text(slide, MARGIN, Inches(0.52), W - 2 * MARGIN, Inches(0.28),
-              "FY27 Q1 \u00b7 TERRITORY PLAN \u00b7 INDIA", size=11, color=ACCENT,
+              "FY27 H1 \u00b7 TERRITORY PLAN \u00b7 INDIA", size=11, color=ACCENT,
               bold=True, space=True)
     deck.text(slide, MARGIN, Inches(0.86), W - 2 * MARGIN, Inches(0.62),
               "Where I am, and how I make the number", size=32, color=WHITE, bold=True)
@@ -91,45 +91,54 @@ def slide_1_scorecard(deck, coverage, focus):
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(2.16), Emu(int(w - Inches(0.6))),
                   Inches(0.26), bucket.get("label", "").upper(), size=10.5, color=color,
                   bold=True, space=True)
-        target = bucket.get("q1Target")
-        known = bucket.get("q1TargetKnown")
+        target = bucket.get("h1Target")
+        known = bucket.get("targetKnown")
         recurring = bucket.get("recurring")
-        covered = bucket.get("q1Covered") or 0
+        covered = bucket.get("h1Covered") or 0
         # A recurring bucket's headline is its carry, not its booked month. Showing one
-        # month of consumption against a quarterly target read as 28% attained when the
-        # same run rate actually covers 82% of the quarter on its own.
-        headline = covered if recurring else (bucket.get("attainedQ1") or 0)
+        # month of consumption against a half-year target read as 14% attained when the
+        # same run rate actually covers 85% of the half on its own.
+        headline = covered if recurring else (bucket.get("attainedH1") or 0)
         deck.text(slide, Emu(int(x + Inches(0.3))), Inches(2.5), Inches(2.4), Inches(0.6),
                   money(headline), size=34, color=WHITE, bold=True)
         if known:
-            right = "of %s Q1 target" % money(target)
-            gap = bucket.get("q1Gap")
-            pct = bucket.get("q1CoveredPct") or 0
+            right = "of %s H1 target" % money(target)
+            gap = bucket.get("h1Gap")
+            pct = bucket.get("h1CoveredPct") or 0
             if recurring:
                 sub = ("%s growth needed \u00b7 %.0f%% covered by run rate"
                        % (money(max(0.0, float(gap or 0))), pct))
             else:
-                sub = ("%s covered incl. Q1 pipeline (%.0f%%)"
+                sub = ("%s covered incl. H1 pipeline (%.0f%%)"
                        % (money(covered), pct))
         else:
-            right = "Q1 target: TBD"
+            right = "H1 target: TBD"
             sub = "target not yet set \u2014 attainment absolute"
         deck.text(slide, Emu(int(x + Inches(2.85))), Inches(2.72), Emu(int(w - Inches(3.15))),
                   Inches(0.3), right, size=12.5, color=MUTED)
+        # The Q1/Q2 split sits under the H1 headline: the half is the number, but the
+        # quarters are how it is actually landed, and they are not evenly loaded.
+        q1t = bucket.get("q1Target")
+        q2t = (round(target - q1t, 2) if (known and q1t is not None) else None)
+        if q1t is not None and q2t is not None:
+            split = "Q1 %s \u00b7 Q2 %s" % (money(q1t), money(q2t))
+            deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.44),
+                      Emu(int(w - Inches(0.6))), Inches(0.26), split, size=10.5,
+                      color=MUTED)
         # Pipeline belongs inside its own bucket panel. Shown as one blended figure it
         # reads as cover for whichever gap it happens to sit next to.
-        live = bucket.get("q1LivePipeline") or 0
+        live = bucket.get("livePipeline") or 0
         if live and not recurring:
-            sub = "%s \u00b7 %s live Q1 pipeline" % (sub, money(live))
-        deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.18), Emu(int(w - Inches(0.6))),
+            sub = "%s \u00b7 %s live H1 pipeline" % (sub, money(live))
+        deck.text(slide, Emu(int(x + Inches(0.3))), Inches(3.12), Emu(int(w - Inches(0.6))),
                   Inches(0.28), sub, size=11, color=MUTED)
 
         # Progress bar. A number without a denominator is a claim; a bar is a position.
         bar_w = w - Inches(0.6)
-        deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.56), bar_w, Inches(0.16), PANEL_2)
+        deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.76), bar_w, Inches(0.16), PANEL_2)
         if known and target:
             filled = max(0.02, min(1.0, float(headline) / float(target)))
-            deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.56),
+            deck.fill(slide, Emu(int(x + Inches(0.3))), Inches(3.76),
                       Emu(int(bar_w * filled)), Inches(0.16), color)
         return h
 
@@ -137,16 +146,17 @@ def slide_1_scorecard(deck, coverage, focus):
     bucket_card(Inches(6.95), b2, PLAY_COLOR["Innovate"])
 
     ftotals = focus.get("totals", {})
-    b1_pipe = (coverage.get("pipeline", {}) or {}).get("q1ByBucket", {}).get("Bucket 1")
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
     run = coverage.get("runRate", {}) or {}
     month_total = round(sum(float(v or 0) for v in (run.get("products") or {}).values()), 2)
+    growth_pct = round(float(run.get("growthPerQuarter") or 0) * 100)
     cards = [
         ("Focus accounts", num(focus.get("selectedCount")), "of %s in book" % num(focus.get("bookSize"))),
         ("Bucket 2 run rate", money(month_total) if month_total else "TBD",
-         "per month \u00b7 carried flat across Q1" if month_total
+         "per month \u00b7 Q1 flat, Q2 +%d%%" % growth_pct if month_total
          else "set runRate in targets.json"),
         ("Current ARR", money(ftotals.get("currentArr")), "installed base in focus set"),
-        ("Bucket 1 Q1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in Q1"),
+        ("Bucket 1 H1 pipeline", money(b1_pipe), "GHE + GHAS, close-dated in H1"),
     ]
     x = MARGIN
     for label, value, sub in cards:
@@ -156,8 +166,8 @@ def slide_1_scorecard(deck, coverage, focus):
     deck.text(slide, MARGIN, Inches(6.06), W - 2 * MARGIN, Inches(0.5),
               "Bucket 1 is GHE + GHAS, sold as deals. Bucket 2 is recurring consumption "
               "\u2014 Copilot, Actions, GHAzDO \u2014 so it is measured as run rate carried "
-              "across the quarter, not as bookings. Focus accounts are scoped to H1; "
-              "targets and coverage are Q1.",
+              "across the half, not as bookings. Targets, coverage and focus accounts are "
+              "all H1; the Q1/Q2 split is shown because the half is not evenly loaded.",
               size=11.5, color=MUTED)
     deck.footnote(slide, "Bucket 2 attainment to date and month-1 run rate are the same money, "
                          "counted once. All figures computed from SuperDash, Kusto billing facts "
@@ -461,51 +471,55 @@ def slide_7_coverage(deck, coverage, focus):
     copilot = products.get("Copilot") or {}
     b1 = buckets.get("Bucket 1") or {}
     b2 = buckets.get("Bucket 2") or {}
-    ghe_gap = ghe.get("q1Gap")
-    ghas_cover = ghas.get("q1CoveredPct")
-    b2_gap = b2.get("q1Gap")
-    b1_covered_pct = b1.get("q1CoveredPct")
+    ghe_gap = ghe.get("h1Gap")
+    ghas_cover = ghas.get("h1CoveredPct")
+    b2_gap = b2.get("h1Gap")
+    b1_covered_pct = b1.get("h1CoveredPct")
+    run_cfg = coverage.get("runRate") or {}
+    month_total = round(sum(float(v or 0) for v in (run_cfg.get("products") or {}).values()), 2)
+    growth_pct = round(float(run_cfg.get("growthPerQuarter") or 0) * 100)
+    growth_contrib = float(run_cfg.get("growthContribution") or 0)
 
     # Every column below is a dated, invoiceable number. Nothing modelled.
-    if not b1.get("q1TargetKnown") or not b2.get("q1TargetKnown"):
+    if not b1.get("targetKnown") or not b2.get("targetKnown"):
         narrative = ("Targets are not yet set for every product, so coverage reads TBD. Fill in "
-                     "targets.json and re-run to see the Q1 gap per product.")
+                     "targets.json and re-run to see the H1 gap per product.")
         note = ("Coverage reads TBD wherever targets.json is not yet filled in.")
     else:
         narrative = (
-            "Bucket 1 is a deal problem: %s of dated Q1 pipeline against a %s target, but it "
+            "Bucket 1 is a deal problem: %s of dated H1 pipeline against a %s target, but it "
             "leans on GHAS at %.0f%% while GHE is still %s short. Bucket 2 is not a deal "
-            "problem at all \u2014 the existing run rate already covers %.0f%% of the quarter, "
+            "problem at all \u2014 the existing run rate already covers %.0f%% of the half, "
             "and the whole ask is %s of growth on top, %s of it Copilot."
-            % (money(b1.get("q1LivePipeline")), money(b1.get("q1Target")),
+            % (money(b1.get("livePipeline")), money(b1.get("h1Target")),
                ghas_cover or 0, money(max(0.0, float(ghe_gap or 0))),
-               b2.get("q1CoveredPct") or 0, money(max(0.0, float(b2_gap or 0))),
-               money(max(0.0, float(copilot.get("q1Gap") or 0)))))
+               b2.get("h1CoveredPct") or 0, money(max(0.0, float(b2_gap or 0))),
+               money(max(0.0, float(copilot.get("h1Gap") or 0)))))
         note = (
             "The two buckets fail differently and must be managed differently. Bucket 1 is "
             "carried by GHAS closes - concentration risk, not comfort - with GHE %s short on "
-            "its own line. Bucket 2 needs no new logos: hold the %s monthly run rate and add "
-            "%s of net-new consumption, overwhelmingly Copilot seats. If asked what changes "
-            "the number, the answer is GHE migration supply and Copilot seat expansion."
-            % (money(max(0.0, float(ghe_gap or 0))),
-               money(round(sum(float(v or 0) for v in
-                              ((coverage.get("runRate") or {}).get("products") or {}).values()), 2)),
-               money(max(0.0, float(b2_gap or 0)))))
+            "its own line, and its pipeline is loaded into Q1 rather than spread across the "
+            "half. Bucket 2 needs no new logos: hold the %s monthly run rate and add %s of "
+            "net-new consumption, overwhelmingly Copilot seats. The Q2 carry assumes %d%% "
+            "quarter-on-quarter growth, worth %s of the cover shown - challenge that rate, "
+            "not the total."
+            % (money(max(0.0, float(ghe_gap or 0))), money(month_total),
+               money(max(0.0, float(b2_gap or 0))), growth_pct, money(growth_contrib)))
 
-    slide = deck.slide("Coverage: Q1 target vs what already covers it",
-                       "Q1 \u00b7 Coverage math", note=note)
+    slide = deck.slide("Coverage: H1 target vs what already covers it",
+                       "H1 \u00b7 Coverage math", note=note)
     rows, colors = [], {}
 
     for index, product in enumerate(coverage.get("products", []) or []):
-        known = product.get("q1TargetKnown")
-        pct = product.get("q1CoveredPct")
+        known = product.get("targetKnown")
+        pct = product.get("h1CoveredPct")
         recurring = (buckets.get(product.get("bucket")) or {}).get("recurring")
-        gap = product.get("q1Gap")
+        gap = product.get("h1Gap")
         rows.append([
             product.get("product", ""),
             "Run rate" if recurring else "Dated pipeline",
-            money(product.get("q1Target")) if known else "TBD",
-            money(product.get("q1Covered")),
+            money(product.get("h1Target")) if known else "TBD",
+            money(product.get("h1Covered")),
             ("%.0f%%" % pct) if pct is not None else "\u2014",
             (money(gap) if gap is not None and gap > 0 else "Covered") if known else "\u2014",
         ])
@@ -513,34 +527,34 @@ def slide_7_coverage(deck, coverage, focus):
         colors[index] = ratio_color((pct / 100.0) if pct is not None else None)
 
     deck.table(slide, MARGIN, BODY_TOP, W - 2 * MARGIN,
-               ["Product", "Covered by", "Q1 target", "Q1 covered", "Cover", "Gap to target"],
+               ["Product", "Covered by", "H1 target", "H1 covered", "Cover", "Gap to target"],
                [1.7, 2.0, 1.9, 1.9, 1.5, 3.1], rows, row_h=0.46, size=11.5,
                colors=colors)
 
     top = float(BODY_TOP) + Inches(0.3) + Inches(0.46) * len(rows) + Inches(0.32)
 
     seller = pipeline.get("seller") or 0
-    b1_gap = b1.get("q1Gap")
+    b1_gap = b1.get("h1Gap")
     b1_over = b1_gap is not None and b1_gap <= 0
-    b1_known = b1.get("q1TargetKnown")
-    b2_known = b2.get("q1TargetKnown")
+    b1_known = b1.get("targetKnown")
+    b2_known = b2.get("targetKnown")
     # With no target there is no denominator, so a ratio card would be dividing a real
     # number by zero and printing it as fact. Say TBD instead.
     cards = [
-        ("Bucket 1 Q1 covered",
-         ("%s / %s" % (money(b1.get("q1Covered")), money(b1.get("q1Target"))))
-         if b1_known else money(b1.get("q1Covered")),
-         ("attained + dated Q1 pipeline (%.0f%%)" % (b1_covered_pct or 0)) if b1_known
-         else "dated Q1 pipeline \u00b7 target TBD",
+        ("Bucket 1 H1 covered",
+         ("%s / %s" % (money(b1.get("h1Covered")), money(b1.get("h1Target"))))
+         if b1_known else money(b1.get("h1Covered")),
+         ("attained + dated H1 pipeline (%.0f%%)" % (b1_covered_pct or 0)) if b1_known
+         else "dated H1 pipeline \u00b7 target TBD",
          PLAY_COLOR["Scale"] if (b1_known and b1_over) else WARN),
-        ("Bucket 2 Q1 covered",
-         ("%s / %s" % (money(b2.get("q1Covered")), money(b2.get("q1Target"))))
-         if b2_known else money(b2.get("q1Covered")),
-         ("run rate carried flat (%.0f%%)" % (b2.get("q1CoveredPct") or 0)) if b2_known
-         else "run rate flat \u00b7 target TBD", ACCENT),
+        ("Bucket 2 H1 covered",
+         ("%s / %s" % (money(b2.get("h1Covered")), money(b2.get("h1Target"))))
+         if b2_known else money(b2.get("h1Covered")),
+         ("run rate: Q1 flat, Q2 +%d%% (%.0f%%)" % (growth_pct, b2.get("h1CoveredPct") or 0))
+         if b2_known else "run rate \u00b7 target TBD", ACCENT),
         ("Bucket 2 growth gap",
          money(max(0.0, float(b2_gap or 0))) if b2_known else "TBD",
-         ("%s Copilot \u00b7 the real Q1 ask" % money(max(0.0, float(copilot.get("q1Gap") or 0))))
+         ("%s Copilot \u00b7 the real H1 ask" % money(max(0.0, float(copilot.get("h1Gap") or 0))))
          if b2_known else "set the Bucket 2 target to size this",
          WARN),
         ("H1 renewal pipeline", money(pipeline.get("renewal")),
@@ -648,27 +662,31 @@ def slide_8_how(deck, focus, report):
 
 def slide_9_msft_partners(deck, focus, partners, cosell=None):
     slide = deck.slide("Microsoft overlap and partner leverage", "Q5 \u00b7 Co-sell",
-                       note="A TPID means the account is already a Microsoft customer with a "
-                            "named account team. That is a route in, and it is also how partner "
-                            "delivery capacity gets funded.")
+                       note="A TPID alone is close to the default state of this book, so it is "
+                            "not reported as co-sell. Only a TPID plus a named Microsoft "
+                            "account manager or specialist gives a person to sell with; that is "
+                            "tier 1. TPID without a named owner is partner-led.")
     accounts = focus.get("accounts", [])
-    overlap = [a for a in accounts if a.get("msftOverlap")]
+    tier1 = [a for a in accounts if int(a.get("msftTier") or 3) == 1]
+    tier2 = [a for a in accounts if int(a.get("msftTier") or 3) == 2]
+    tier3 = [a for a in accounts if int(a.get("msftTier") or 3) == 3]
     partner_map = (partners or {}).get("accounts", {}) or {}
 
     with_partner = [a for a in accounts
                     if [p for p in (partner_map.get(a.get("salesforceId"), {}) or {}).get("partners", [])
                         if p.get("name") and p.get("name") != "Invalid"]]
 
+    t1_pipe = sum(float(a.get("h1PipelineValue") or 0) for a in tier1)
     cards = [
-        ("Accounts with TPID", num(len(overlap)),
-         "%s of focus set" % ("%.0f%%" % (100.0 * len(overlap) / max(1, len(accounts)))), ACCENT),
-        ("Pipeline under co-sell", money(sum(float(a.get("h1PipelineValue") or 0)
-                                              for a in overlap)),
-         "dated H1 deals with a TPID", WHITE),
-        ("Accounts with a named partner", num(len(with_partner)),
-         "existing partner relationship", PLAY_COLOR["Scale"]),
-        ("Partner-led delivery need", num(len([a for a in overlap if a.get("play") == "Scale"])),
-         "Scale accounts needing migration", PLAY_COLOR["Trust"]),
+        ("Tier 1 \u00b7 Co-sell led", num(len(tier1)),
+         "TPID + named Microsoft seller", ACCENT),
+        ("Tier 2 \u00b7 Partner led", num(len(tier2)),
+         "TPID only \u2014 no named counterpart", PLAY_COLOR["Trust"]),
+        ("Tier 3 \u00b7 GitHub direct", num(len(tier3)),
+         "no Microsoft route today", MUTED),
+        ("Tier 1 pipeline", money(t1_pipe),
+         "dated H1 deals with a named seller" if t1_pipe > 0
+         else "co-sell is unworked, not unavailable", WARN if t1_pipe <= 0 else WHITE),
     ]
     x = MARGIN
     for label, value, sub, color in cards:
@@ -677,23 +695,32 @@ def slide_9_msft_partners(deck, focus, partners, cosell=None):
 
     # The table body holds 7 rows before it runs into the caption below, so the
     # co-sell watchlist takes its slots from the ranked list rather than extending
-    # past the plate.
+    # past the plate. Tier 1 leads: those are the accounts with a person to call.
     focus_ids = {a.get("salesforceId") for a in accounts}
     watchlist = [a for a in (cosell or []) if a.get("salesforceId") not in focus_ids][:2]
-    top_overlap = sorted(overlap, key=lambda a: int(a.get("rank") or 999))[:7 - len(watchlist)]
+    ranked = sorted(tier1, key=lambda a: int(a.get("rank") or 999)) + \
+        sorted(tier2, key=lambda a: int(a.get("rank") or 999))
+    top_overlap = ranked[:7 - len(watchlist)]
     rows, colors = [], {}
     for index, account in enumerate(top_overlap):
         entry = partner_map.get(account.get("salesforceId"), {}) or {}
         names = [p.get("name") for p in (entry.get("partners") or [])
                  if p.get("name") and p.get("name") != "Invalid"]
+        tier = int(account.get("msftTier") or 3)
+        owner = account.get("msftOwner") or ""
+        if tier == 1:
+            route = owner if owner else "Seller-asserted \u2014 not named in Salesforce"
+        else:
+            route = "Partner led \u2014 no Microsoft owner named"
         rows.append([
-            truncate(account.get("name", ""), 26),
+            truncate(account.get("name", ""), 24),
             account.get("play", ""),
             "#%d" % int(account.get("rank") or 0),
-            (account.get("tpids") or [""])[0],
-            truncate(", ".join(names) if names else "No partner mapped \u2014 needs sourcing", 46),
+            "Tier %d" % tier,
+            truncate(route, 22),
+            truncate(", ".join(names) if names else "No partner mapped \u2014 needs sourcing", 30),
         ])
-        colors[index] = PLAY_COLOR.get(account.get("play"), ACCENT)
+        colors[index] = ACCENT if tier == 1 else PLAY_COLOR.get(account.get("play"), MUTED)
 
     # Accounts I am working with the Microsoft team that carry no product footprint
     # yet. They have no rank because there is nothing in the data to rank them on -
@@ -701,25 +728,28 @@ def slide_9_msft_partners(deck, focus, partners, cosell=None):
     for account in watchlist:
         index = len(rows)
         rows.append([
-            truncate(account.get("name", ""), 26),
+            truncate(account.get("name", ""), 24),
             account.get("play", ""),
             "\u2014",
-            (account.get("tpids") or [""])[0] or "Seller-asserted",
-            "Prospect \u2014 no footprint yet; Microsoft-led",
+            "Tier 1",
+            "Seller-asserted",
+            "Prospect \u2014 Microsoft-led, no footprint yet",
         ])
         colors[index] = MUTED
 
     deck.table(slide, MARGIN, Inches(3.42), W - 2 * MARGIN,
-               ["Account", "Play", "Rank", "Microsoft TPID", "Partner"],
-               [3.0, 1.5, 1.0, 2.2, 4.4], rows, row_h=0.36, size=10.5, colors=colors)
+               ["Account", "Play", "Rank", "Tier", "Microsoft route", "Partner"],
+               [2.7, 1.35, 0.85, 1.0, 2.6, 3.6], rows, row_h=0.36, size=10.5, colors=colors)
 
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.42),
-              "How I use it: TPID accounts get a joint account-team introduction before any "
-              "GitHub-only outreach; Scale accounts get a partner attached to the migration "
-              "before the technical win, so delivery is never the reason a deal slips.",
+              "How I use it: tier 1 gets a joint account-team introduction before any "
+              "GitHub-only outreach. Tier 2 gets a partner attached to the migration before "
+              "the technical win, so delivery is never the reason a deal slips. Tier 3 is run "
+              "direct and is not counted as Microsoft coverage.",
               size=11.5, color=MUTED)
-    deck.footnote(slide, "TPIDs from Salesforce MSFT_All_TPIDs__c / MS_Sales_TPID_Best_Match__c. "
-                         "Partner relationships from Salesforce Partner records.")
+    deck.footnote(slide, "Tier from Salesforce MsftOwnerName__c plus MSFT_All_TPIDs__c / "
+                         "MS_Sales_TPID_Best_Match__c. Partner relationships from Salesforce "
+                         "Partner records. Seller-asserted tiers are labelled as such.")
     return slide
 
 
@@ -745,7 +775,7 @@ def slide_10_working(deck, learnings):
     return slide
 
 
-def slide_11_asks(deck, coverage, focus, learnings):
+def slide_11_asks(deck, coverage, focus, learnings, cosell=None):
     slide = deck.slide("Asks", "Q7 \u00b7 Leadership and cross-functional",
                        note="Each ask is tied to a specific number on an earlier slide, so it is "
                             "answerable rather than aspirational.")
@@ -755,28 +785,28 @@ def slide_11_asks(deck, coverage, focus, learnings):
     ghas = products.get("GHAS", {})
 
     leadership = []
-    if ghe.get("q1TargetKnown"):
+    if ghe.get("targetKnown"):
         b1 = next((b for b in coverage.get("buckets", []) or []
                    if b.get("bucket") == "Bucket 1"), {})
-        gap = b1.get("q1Gap")
-        ghe_short = max(0.0, float(ghe.get("q1Gap") or 0))
+        gap = b1.get("h1Gap")
+        ghe_short = max(0.0, float(ghe.get("h1Gap") or 0))
         if gap is not None and gap <= 0:
             # Bucket 1 nets out only because GHAS over-covers. The ask is still real,
             # so it is framed on the GHE line rather than the netted bucket.
             leadership.append(
-                "GHE supply: %s is close-dated against a %s Q1 target (%.0f%%), %s short on "
+                "GHE supply: %s is close-dated against a %s H1 target (%.0f%%), %s short on "
                 "the GHE line. Bucket 1 only nets to covered because GHAS is carrying it, so "
                 "I need migration-led demand generation or account additions on GHE rather "
                 "than relying on that concentration holding."
-                % (money(ghe.get("q1LivePipeline")), money(ghe.get("q1Target")),
-                   ghe.get("q1CoveredPct") or 0, money(ghe_short)))
+                % (money(ghe.get("livePipeline")), money(ghe.get("h1Target")),
+                   ghe.get("h1CoveredPct") or 0, money(ghe_short)))
         else:
             leadership.append(
-                "GHE supply: %s is close-dated against a %s Q1 target (%.0f%%), leaving %s of "
+                "GHE supply: %s is close-dated against a %s H1 target (%.0f%%), leaving %s of "
                 "Bucket 1 uncovered. I need migration-led demand generation or account "
                 "additions to close the supply gap, not just conversion pressure."
-                % (money(ghe.get("q1LivePipeline")), money(ghe.get("q1Target")),
-                   ghe.get("q1CoveredPct") or 0,
+                % (money(ghe.get("livePipeline")), money(ghe.get("h1Target")),
+                   ghe.get("h1CoveredPct") or 0,
                    money(gap) if gap is not None else "the balance"))
     else:
         leadership.append(
@@ -788,16 +818,16 @@ def slide_11_asks(deck, coverage, focus, learnings):
     # hunt for the whole target. Sizing it as a booking gap overstated it four-fold.
     b2 = bucket_of(coverage, "Bucket 2")
     copilot = products.get("Copilot") or {}
-    if b2.get("q1TargetKnown"):
-        b2_gap = max(0.0, float(b2.get("q1Gap") or 0))
+    if b2.get("targetKnown"):
+        b2_gap = max(0.0, float(b2.get("h1Gap") or 0))
         if b2_gap > 0:
             leadership.append(
                 "Copilot seat growth: the existing run rate already covers %.0f%% of the %s "
-                "Bucket 2 quarter, so the ask is %s of net-new consumption \u2014 %s of it "
+                "Bucket 2 half, so the ask is %s of net-new consumption \u2014 %s of it "
                 "Copilot. That is seat expansion inside accounts already live, not new logos, "
                 "and it needs adoption support rather than more pipeline."
-                % (b2.get("q1CoveredPct") or 0, money(b2.get("q1Target")), money(b2_gap),
-                   money(max(0.0, float(copilot.get("q1Gap") or 0)))))
+                % (b2.get("h1CoveredPct") or 0, money(b2.get("h1Target")), money(b2_gap),
+                   money(max(0.0, float(copilot.get("h1Gap") or 0)))))
     else:
         leadership.append(
             "Bucket 2 target: consumption target is still unset. I am carrying %s of dated "
@@ -805,32 +835,53 @@ def slide_11_asks(deck, coverage, focus, learnings):
             % (money((products.get("Consumption") or {}).get("livePipeline")),
                money(b2.get("attainedH1"))))
 
-    ghas_cover = ghas.get("q1CoveredPct")
+    ghas_cover = ghas.get("h1CoveredPct")
     if ghas_cover is not None and ghas_cover >= 100:
         leadership.append(
-            "GHAS delivery capacity: GHAS is already %.0f%% covered by dated Q1 pipeline (%s). "
+            "GHAS delivery capacity: GHAS is already %.0f%% covered by dated H1 pipeline (%s). "
             "The risk is no longer sourcing it, it is landing it \u2014 I need "
             "security-specialist time to get these to production, not more pipeline."
-            % (ghas_cover, money(ghas.get("q1LivePipeline"))))
+            % (ghas_cover, money(ghas.get("livePipeline"))))
     else:
         leadership.append(
             "GHAS technical capacity: %d of %d focus accounts consume GHAS today, against %s "
             "of dated GHAS pipeline. Converting that needs security-specialist time, not more "
             "pipeline." % (facts.get("consumingAccounts", {}).get("ghas", 0),
-                           facts.get("focusCount", 0), money(ghas.get("q1LivePipeline"))))
+                           facts.get("focusCount", 0), money(ghas.get("livePipeline"))))
 
+    accounts = focus.get("accounts", []) or []
+    tier1 = [a for a in accounts if int(a.get("msftTier") or 3) == 1]
+    tier2 = [a for a in accounts if int(a.get("msftTier") or 3) == 2]
+    # A TPID with no named Microsoft owner is not co-sell coverage - it is an
+    # unworked route. Splitting the ask keeps that distinction on the slide.
+    # Accounts worked with Microsoft whose Salesforce record does not say so. Read from
+    # the data rather than named in code: the ask is real for whoever it applies to, and
+    # hard-coding customer names would ship one seller's book inside the plugin.
+    gap_named = sorted({a.get("name") for a in accounts
+                        if a.get("msftDataGap") and a.get("name")})
+    gap_named += sorted({a.get("name") for a in (cosell or [])
+                         if a.get("msftDataGap") and a.get("name")})
     xfn = [
-        "Partnerships: %d focus accounts carry a Microsoft TPID but only %d have a named "
-        "partner. I need partner sourcing on the Scale accounts so migration delivery is not "
-        "the constraint." % (facts.get("withOverlap", 0), facts.get("withNamedPartner", 0)),
-        "Microsoft co-sell: joint account planning on the %d TPID accounts, sequenced before "
-        "Q2 so the Q2 number has a Q1 origin." % facts.get("withOverlap", 0),
-        "Marketing / SDR: %d of %d focus accounts have no two-way contact. Targeted demand "
-        "generation into those accounts is faster than cold outbound from me."
+        "Partnerships: %d focus accounts are partner-led (TPID, no named Microsoft owner) "
+        "and only %d have a named partner. I need partner sourcing on the Scale accounts."
+        % (len(tier2), facts.get("withNamedPartner", 0)),
+        "Microsoft co-sell: only %d focus accounts have a named Microsoft counterpart. Joint "
+        "planning on those, plus a route into the %d partner-led accounts, before Q2."
+        % (len(tier1), len(tier2)),
+    ]
+    if gap_named:
+        xfn.append(
+            "Sales ops \u00b7 data quality: %s %s worked with Microsoft but %s no named owner "
+            "in Salesforce. Untagged means no co-sell credit."
+            % (truncate(", ".join(gap_named[:3]), 60),
+               "is" if len(gap_named) == 1 else "are",
+               "carries" if len(gap_named) == 1 else "carry"))
+    xfn += [
+        "Marketing / SDR: %d of %d focus accounts have no two-way contact. Demand generation "
+        "there is faster than cold outbound from me."
         % (facts.get("withoutTwoWay", 0), facts.get("focusCount", 0)),
-        "Deal desk / ops: %d stale opportunities worth %s need a hygiene pass so forecast "
-        "coverage means something." % (facts.get("staleCount", 0),
-                                       money(facts.get("staleValue"))),
+        "Deal desk: %d stale opportunities worth %s need a hygiene pass."
+        % (facts.get("staleCount", 0), money(facts.get("staleValue"))),
     ]
 
     deck.panel(slide, MARGIN, BODY_TOP, Inches(6.0), "FROM LEADERSHIP", leadership,
@@ -838,14 +889,14 @@ def slide_11_asks(deck, coverage, focus, learnings):
     deck.panel(slide, Inches(6.95), BODY_TOP, Inches(6.0), "FROM CROSS-FUNCTIONAL PARTNERS",
                xfn, PLAY_COLOR["Scale"], size=11.5, gap=0.2, min_h=Inches(4.5))
 
-    b1_gap = bucket_of(coverage, "Bucket 1").get("q1Gap")
-    b1_pipe = (coverage.get("pipeline", {}) or {}).get("q1ByBucket", {}).get("Bucket 1")
+    b1_gap = bucket_of(coverage, "Bucket 1").get("h1Gap")
+    b1_pipe = (coverage.get("pipeline", {}) or {}).get("byBucket", {}).get("Bucket 1")
     commitment = (
-        "Commitment: %s of Bucket 1 gap closed in Q1, worked through %d focus accounts "
+        "Commitment: %s of Bucket 1 gap closed in H1, worked through %d focus accounts "
         "with %s already in dated pipeline." % (money(b1_gap), focus.get("selectedCount", 0),
                                                 money(b1_pipe))
         if b1_gap and b1_gap > 0 else
-        "Commitment: %d focus accounts with %s in dated Q1 pipeline, worked to the plan on "
+        "Commitment: %d focus accounts with %s in dated H1 pipeline, worked to the plan on "
         "the previous slides." % (focus.get("selectedCount", 0), money(b1_pipe))
     )
     deck.text(slide, MARGIN, Inches(6.4), W - 2 * MARGIN, Inches(0.36),
@@ -887,6 +938,8 @@ def main():
                    for a in (report or {}).get("accounts", []) or []}
     cosell = [{"salesforceId": sid, "name": rec.get("name", ""),
                "tpids": rec.get("tpids") or [],
+               "msftTier": rec.get("msftTier") or 1,
+               "msftDataGap": rec.get("msftDataGap", ""),
                "play": plays_by_id.get(sid, "")}
               for sid, rec in ((crm.get("accounts") or {}).items())
               if rec.get("msftCoSell")]
@@ -903,7 +956,7 @@ def main():
     slide_8_how(deck, focus, report)
     slide_9_msft_partners(deck, focus, partners, cosell)
     slide_10_working(deck, learnings)
-    slide_11_asks(deck, coverage, focus, learnings)
+    slide_11_asks(deck, coverage, focus, learnings, cosell)
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     deck.save(out_path)

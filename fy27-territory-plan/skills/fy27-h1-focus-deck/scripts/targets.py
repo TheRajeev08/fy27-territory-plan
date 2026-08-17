@@ -41,23 +41,29 @@ PRODUCT_BUCKET = {
 
 
 def run_rate_projection(targets):
-    """Flat-carry projection of the consumption run rate across the focus quarter.
+    """Run-rate carry for the consumption bucket, per quarter.
 
     Bucket 2 is recurring revenue. Last month's consumption repeats unless something
     churns, so the honest denominator question is not "how much of the quarter have we
-    booked" but "how much does the quarter land at if nothing changes, and how much
-    growth closes the rest".
+    booked" but "how much does the half land at if nothing changes, and how much growth
+    closes the rest".
 
-    Deliberately flat: no ramp is assumed, which makes this a floor rather than a
-    forecast. Seat additions and new workloads land as growth on top of it.
+    Q1 is held flat at the measured base: the quarter is already under way and the base
+    is measured now, so claiming growth inside it would be inventing revenue. Q2 applies
+    `growthPerQuarter` once. That growth rate is the vehicle through which seat landings
+    appear - which is exactly why landings are never *also* added to the carry. Adding
+    them would count the same consumption twice, the error this model exists to avoid.
 
-    Returns (per-product projection, months). An empty dict when no run rate is
-    configured, so a book without one simply falls back to the booked-attainment view.
+    Returns (q1 per-product, q2 per-product, months, growth). Empty dicts when no run
+    rate is configured, so a book without one falls back to the booked-attainment view.
     """
     cfg = targets.get("runRate") or {}
     products = cfg.get("products") or {}
     months = float(cfg.get("monthsInQuarter") or 3)
-    return {p: round(float(v or 0) * months, 2) for p, v in products.items()}, months
+    growth = float(cfg.get("growthPerQuarter") or 0.0)
+    q1 = {p: round(float(v or 0) * months, 2) for p, v in products.items()}
+    q2 = {p: round(float(v or 0) * (1.0 + growth) * months, 2) for p, v in products.items()}
+    return q1, q2, months, growth
 
 
 def load(path, default=None):
@@ -161,7 +167,7 @@ def pipeline_totals(crm, focus):
 def build(targets, potential, focus, crm):
     sized = sized_by_product(focus)
     pipe = pipeline_totals(crm, focus)
-    run_rate, run_months = run_rate_projection(targets)
+    run_rate, run_rate_q2, run_months, run_growth = run_rate_projection(targets)
 
     buckets = []
     for name, cfg in targets.get("buckets", {}).items():
@@ -216,12 +222,29 @@ def build(targets, potential, focus, crm):
         # booked attainment plus dated pipeline is the coverage.
         carry = round(sum(v for p, v in run_rate.items()
                           if bucket_of(p) == name), 2) if recurring else 0.0
+        carry_q2 = round(sum(v for p, v in run_rate_q2.items()
+                             if bucket_of(p) == name), 2) if recurring else 0.0
+        carry_h1 = round(carry + carry_q2, 2) if recurring else 0.0
         if recurring:
             covered_q1 = carry
             covered_basis = "run-rate carry (Q1 pipeline is metered consumption, already in the carry)"
         else:
             covered_q1 = round(attained_q1 + bucket_pipe_q1, 2)
             covered_basis = "attained + Q1 pipeline"
+
+        # H1 coverage follows the same rule as Q1, for the same reason. For the recurring
+        # bucket the two quarters of carry are the coverage; open Bucket 2 pipeline is
+        # metered consumption already inside it. For the one-off bucket, attainment plus
+        # H1-dated pipeline is the coverage.
+        if recurring:
+            covered_h1 = carry_h1
+            covered_h1_basis = (
+                "run-rate carry over both quarters (Q1 flat at the measured base, "
+                "Q2 grown %d%%; open Bucket 2 pipeline is metered consumption already "
+                "inside the carry)" % round(run_growth * 100))
+        else:
+            covered_h1 = round(attained_h1 + bucket_pipe, 2)
+            covered_h1_basis = "attained + H1 pipeline"
 
         buckets.append({
             "bucket": name,
@@ -244,12 +267,20 @@ def build(targets, potential, focus, crm):
             "livePipeline": bucket_pipe,
             "q1LivePipeline": bucket_pipe_q1,
             "q1RunRateCarry": carry,
+            "q2RunRateCarry": carry_q2,
+            "h1RunRateCarry": carry_h1,
             "q1Covered": covered_q1,
             "q1CoveredBasis": covered_basis,
             "q1CoveredPct": (round(100.0 * covered_q1 / bucket_target_q1, 1)
                              if bucket_q1_known and bucket_target_q1 else None),
             "q1Gap": (round(bucket_target_q1 - covered_q1, 2)
                       if bucket_q1_known else None),
+            "h1Covered": covered_h1,
+            "h1CoveredBasis": covered_h1_basis,
+            "h1CoveredPct": (round(100.0 * covered_h1 / bucket_target_h1, 1)
+                             if bucket_known and bucket_target_h1 else None),
+            "h1Gap": (round(bucket_target_h1 - covered_h1, 2)
+                      if bucket_known else None),
             # Gap left after attainment and dated pipeline both count. This is the
             # number that has to come from somewhere not yet visible.
             "uncoveredGap": (round(bucket_target_h1 - attained_h1 - bucket_pipe, 2)
@@ -271,26 +302,37 @@ def build(targets, potential, focus, crm):
                 live = round(pipe.get("byProduct", {}).get(product, 0.0), 2)
                 live_q1 = round(pipe.get("q1ByProduct", {}).get(product, 0.0), 2)
             carry = round(run_rate.get(product, 0.0), 2) if bucket["recurring"] else 0.0
+            carry_q2 = round(run_rate_q2.get(product, 0.0), 2) if bucket["recurring"] else 0.0
+            carry_h1 = round(carry + carry_q2, 2) if bucket["recurring"] else 0.0
             # Same rule as the bucket: a recurring line is covered by its carry alone.
             covered_q1 = carry if bucket["recurring"] else round(live_q1, 2)
+            covered_h1 = carry_h1 if bucket["recurring"] else round(live, 2)
             q1_target = line["q1Target"]
+            h1_target = line["h1Target"]
             product_rows.append({
                 "bucket": bucket["bucket"],
                 "product": product,
                 "q1Target": q1_target,
                 "q2Target": line["quarters"]["Q2"],
-                "h1Target": line["h1Target"],
+                "h1Target": h1_target,
                 "targetKnown": line["targetKnown"],
                 "q1TargetKnown": line["q1TargetKnown"],
                 "sizedPotential": tam,
                 "livePipeline": live,
                 "q1LivePipeline": live_q1,
                 "q1RunRateCarry": carry,
+                "q2RunRateCarry": carry_q2,
+                "h1RunRateCarry": carry_h1,
                 "q1Covered": covered_q1,
                 "q1CoveredPct": (round(100.0 * covered_q1 / q1_target, 1)
                                  if line["q1TargetKnown"] and q1_target else None),
                 "q1Gap": (round(q1_target - covered_q1, 2)
                           if line["q1TargetKnown"] else None),
+                "h1Covered": covered_h1,
+                "h1CoveredPct": (round(100.0 * covered_h1 / h1_target, 1)
+                                 if line["targetKnown"] and h1_target else None),
+                "h1Gap": (round(h1_target - covered_h1, 2)
+                          if line["targetKnown"] else None),
                 # Coverage on dated pipeline is the honest read; coverage on TAM is
                 # only what the book could theoretically address.
                 "pipelineCoverage": (round(live / line["h1Target"], 2)
@@ -304,6 +346,8 @@ def build(targets, potential, focus, crm):
     q1_known = [b for b in buckets if b["q1TargetKnown"]]
     q1_target_total = round(sum(b["q1Target"] for b in q1_known), 2)
     q1_covered_total = round(sum(b["q1Covered"] for b in q1_known), 2)
+    h1_target_total = round(sum(b["h1Target"] for b in known_targets), 2)
+    h1_covered_total = round(sum(b["h1Covered"] for b in known_targets), 2)
     return {
         "fiscalYear": targets.get("fiscalYear", ""),
         "half": targets.get("half", ""),
@@ -312,8 +356,17 @@ def build(targets, potential, focus, crm):
         "runRate": {
             "products": (targets.get("runRate") or {}).get("products", {}),
             "monthsInQuarter": run_months,
+            "growthPerQuarter": run_growth,
             "quarterProjection": run_rate,
+            "q2Projection": run_rate_q2,
+            "h1Projection": {p: round(v + run_rate_q2.get(p, 0.0), 2)
+                             for p, v in run_rate.items()},
             "total": round(sum(run_rate.values()), 2),
+            "h1Total": round(sum(run_rate.values()) + sum(run_rate_q2.values()), 2),
+            "growthContribution": round(sum(run_rate_q2.values()) - sum(run_rate.values()), 2),
+            "basisNote": ("Q1 held flat at the measured monthly base; Q2 grown %d%% once. "
+                          "The growth rate is an assumption, the base is measured."
+                          % round(run_growth * 100)),
         },
         "buckets": buckets,
         "products": product_rows,
@@ -337,6 +390,10 @@ def build(targets, potential, focus, crm):
             "q1CoveredPct": (round(100.0 * q1_covered_total / q1_target_total, 1)
                              if q1_target_total else None),
             "q1Gap": round(q1_target_total - q1_covered_total, 2),
+            "h1Covered": h1_covered_total,
+            "h1CoveredPct": (round(100.0 * h1_covered_total / h1_target_total, 1)
+                             if h1_target_total else None),
+            "h1CoveredGap": round(h1_target_total - h1_covered_total, 2),
             "q1TargetsComplete": len(q1_known) == len(buckets),
         },
     }

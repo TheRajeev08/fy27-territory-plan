@@ -140,7 +140,65 @@ def current_state(actuals_for_account):
     }
 
 
-def size_account(account, actuals, rates):
+def norm_name(value):
+    return " ".join(str(value or "").lower().replace("&", "and").split())
+
+
+# Override pipeline products -> the sizing-line product label they correspond to.
+# A seller-asserted line REPLACES the modelled line for the same product rather than
+# adding to it: a signed or verbally agreed quantity is a better fact than a whitespace
+# model, and summing the two would count the same seats twice.
+OVERRIDE_PRODUCT_LINES = {
+    "copilot": ("Copilot", "seats"),
+    "ghe": ("GHE", "seats"),
+    "ghas": ("GHAS", "committers"),
+}
+
+
+def override_lines(record, rates, prices):
+    """Turn seller-asserted pipeline into sizing lines.
+
+    The whitespace model only sees installed base, so an account that has already
+    committed to seats it has not yet provisioned sizes at zero and never enters the
+    ranking pool at all. Reading the same overrides the rest of the pipeline already
+    trusts lets a committed deal earn its rank on merit instead of being invisible.
+    """
+    lines = []
+    for entry in (record or {}).get("pipeline", []) or []:
+        product = str(entry.get("product", "")).strip().lower()
+        mapped = OVERRIDE_PRODUCT_LINES.get(product)
+        if not mapped:
+            continue
+        label, metric = mapped
+        quantity = int(float(entry.get("seats") or entry.get("committers") or 0))
+        if quantity <= 0:
+            continue
+
+        rate_month = entry.get("rateMonth")
+        if rate_month:
+            unit = money(float(rate_month) * MONTHS)
+            basis = "observed"
+        elif product == "copilot":
+            unit, basis = rates.copilot_seat_year(prices.get("Copilot"))
+        elif product == "ghe":
+            unit, basis = rates.ghe_seat_year(prices.get("GitHub Enterprise"))
+        else:
+            unit, basis = rates.ghas_committer_year(prices.get("Advanced Security"))
+
+        lines.append({
+            "product": label,
+            "metric": metric,
+            "quantity": quantity,
+            "rate": unit,
+            "basis": "seller-asserted",
+            "priceBasis": basis,
+            "value": money(quantity * unit),
+            "note": entry.get("note") or "Seller-asserted; agreed with the customer, not yet raised in Salesforce",
+        })
+    return lines
+
+
+def size_account(account, actuals, rates, override=None):
     """Convert an account's whitespace signals into dollars, with basis tags."""
     signals = account.get("revenueSignals", {}) or {}
     prices = observed_prices(actuals)
@@ -195,6 +253,14 @@ def size_account(account, actuals, rates):
             "note": "Azure DevOps TAM available to migrate",
         })
 
+    # Seller-asserted lines replace the modelled line for the same product. A quantity
+    # the customer has already agreed to is a harder fact than a whitespace estimate,
+    # and adding the two would count the same seats twice.
+    asserted = override_lines(override, rates, prices)
+    if asserted:
+        replaced = {line["product"] for line in asserted}
+        lines = [line for line in lines if line["product"] not in replaced] + asserted
+
     # AIU deliberately does NOT contribute to potential ARR.
     #
     # Two things are true and must not be conflated:
@@ -240,12 +306,13 @@ def size_account(account, actuals, rates):
 
 def main():
     if len(sys.argv) < 3:
-        raise SystemExit("usage: potential.py <report.json> <runDir> [raw-actuals.json] [pricing.json]")
+        raise SystemExit("usage: potential.py <report.json> <runDir> [raw-actuals.json] [pricing.json] [overrides.json]")
 
     report_path, run_dir = sys.argv[1], sys.argv[2]
     actuals_path = sys.argv[3] if len(sys.argv) > 3 else os.path.join(run_dir, "raw-actuals.json")
     pricing_path = sys.argv[4] if len(sys.argv) > 4 else os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "pricing.json")
+    overrides_path = sys.argv[5] if len(sys.argv) > 5 else os.path.join(run_dir, "overrides.json")
 
     report = load(report_path)
     if not report:
@@ -259,10 +326,19 @@ def main():
     rates = Rates(pricing)
 
     sized = {}
+    overrides = (load(overrides_path, {}) or {}).get("accounts", {}) or {}
+    by_norm = {norm_name(k): v for k, v in overrides.items()}
+    matched = set()
     for account in report.get("accounts", []):
         sid = account.get("salesforceId") or ""
-        sized[sid or account.get("name", "")] = size_account(
-            account, by_account.get(sid), rates)
+        name = account.get("name", "")
+        record = overrides.get(sid) or overrides.get(name) or by_norm.get(norm_name(name))
+        if record:
+            matched.add(name)
+        sized[sid or name] = size_account(
+            account, by_account.get(sid), rates, record)
+
+    unmatched = sorted(k for k in overrides if norm_name(k) not in {norm_name(m) for m in matched})
 
     totals = {}
     for entry in sized.values():
@@ -305,6 +381,8 @@ def main():
         "accountsSized": sum(1 for e in sized.values() if e["sizingCoverage"] == "sized"),
         "accountsTotal": len(sized),
         "accountsWithArr": sum(1 for e in sized.values() if not e["current"]["greenfield"]),
+        "sellerAssertedAccounts": sorted(matched),
+        "overridesUnmatched": unmatched,
     }
 
     os.makedirs(run_dir, exist_ok=True)
@@ -317,6 +395,8 @@ def main():
         "accountsSized": out["accountsSized"],
         "accountsTotal": out["accountsTotal"],
         "accountsWithArr": out["accountsWithArr"],
+        "sellerAssertedAccounts": out["sellerAssertedAccounts"],
+        "overridesUnmatched": out["overridesUnmatched"],
         "totals": {k: v["value"] for k, v in totals.items()},
     }))
 

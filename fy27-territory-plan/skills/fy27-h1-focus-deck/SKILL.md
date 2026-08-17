@@ -164,23 +164,52 @@ something churns, so `targets.json` carries a `runRate` block with the last full
 revenue per product and how many months the quarter carries it for:
 
 ```json
-"runRate": { "month": 1, "monthsInQuarter": 3,
+"runRate": { "month": 1, "monthsInQuarter": 3, "growthPerQuarter": 0,
              "products": { "Copilot": 0, "Actions": 0, "GHAzDO": 0 } }
 ```
 
-`targets.py` projects that flat across the quarter — no assumed ramp, a conservative floor
-rather than a forecast — and reports it as **Q1 coverage**. Two consequences that are easy
-to get wrong and are enforced in the script:
+`targets.py` projects that across the half and reports it as **H1 coverage**, with Q1 and Q2
+computed separately:
+
+- **Q1 is held flat at the measured base.** The base is measured now, inside the quarter
+  already under way, so claiming growth within it would invent revenue that has not happened.
+- **Q2 carries `base × (1 + growthPerQuarter) × monthsInQuarter`.** `growthPerQuarter` ships
+  as `0` — a flat carry, the conservative floor. Set your own rate and the deck states it as
+  an assumption beside the measured base, so leadership can challenge the rate rather than
+  the total. `targets.py` reports `runRate.growthContribution` — exactly how much of the
+  cover comes from the assumption rather than from measured revenue.
+
+Two consequences that are easy to get wrong and are enforced in the script:
 
 - **The elapsed month's attainment and month one of the carry are the same money.** They
-  are counted once. Bucket 2 `q1Covered` is the carry alone; `attainedQ1` is reported as a
+  are counted once. Bucket 2 `h1Covered` is the carry alone; `attainedH1` is reported as a
   separate fact and never added on top.
+- **Seat landings are never added on top of the run rate.** New seats show up *as* run-rate
+  growth. A committed Copilot deal is therefore counted in the growth rate, not as a separate
+  booking — adding both double-counts the same money.
 - **Open Bucket 2 pipeline is metered consumption already inside the carry.** It is shown
   for context and excluded from coverage. Adding it would count the same revenue a third
   time.
 
 Modelling Bucket 2 as a booking gap overstates the ask roughly four-fold: a book whose run
-rate already covers 82% of the quarter has a growth gap, not a hunting problem.
+rate already covers most of the half has a growth gap, not a hunting problem.
+
+**Microsoft overlap is three tiers, not a boolean.** A TPID alone is close to the default
+state of a book — in the reference run, 142 of 251 accounts carry one — so reporting "has
+TPID" as co-sell materially overstates it. `crm_context.py` reads `MsftOwnerName__c` and
+tiers on the presence of a **named owner**:
+
+| Tier | Rule | Means |
+|---|---|---|
+| 1 — Co-sell led | TPID **and** a named Microsoft AM/specialist | there is a person to sell with |
+| 2 — Partner led | TPID only | a route in, but nobody assigned |
+| 3 — Direct | neither | no Microsoft route today |
+
+`MsftOwnerRole__c` is free text and dirty (`AE`, `ACCOUNT EXECUTIVE`, `Account Exective`, and
+at least one record with an email address in the role field), so it is displayed for context
+and never parsed. An `msftCoSell` override forces tier 1 with `msftTierSource: "seller"` and
+records an `msftDataGap` naming exactly what Salesforce is missing — so the deck never implies
+CRM data that is not there, and the gap becomes a data-quality ask instead of disappearing.
 
 Pull Microsoft TPIDs and open opportunities:
 
@@ -289,9 +318,13 @@ let the existing weights move the account — or report that they did not.
         {"product": "GHE",  "seats": 335,      "quarter": "FY27 Q1", "reason": "agreed, not yet raised"},
         {"product": "GHAS", "committers": 285, "quarter": "FY27 Q1", "reason": "agreed, not yet raised"}
       ],
-      "engagement": {"twoWay": true, "meetings": 1, "reason": "live GHAS discussion"},
+      "engagement": {"twoWay": true, "meetings": 1, "lastActivity": "2026-07-01",
+                     "reason": "live GHAS discussion"},
+      "industry": "Financial Services",   // Salesforce Industry blank or miscoded
+      "regulated": true,                  // feeds the Trust fallback tier
+      "industryReason": "what the account actually does — printed as the basis",
       "msftOverlap": false,               // e.g. GitHub-direct account wrongly carrying TPIDs
-      "msftCoSell": true,                 // name on the Microsoft slide even without a TPID
+      "msftCoSell": true,                 // forces Microsoft tier 1, sourced "seller"
       "msftCoSellReason": "worked jointly with the Microsoft account team",
       "play": "Scale",                    // correct a play the ladder got wrong
       "playReason": "why the ladder is wrong here — printed as the play basis",
@@ -305,6 +338,21 @@ let the existing weights move the account — or report that they did not.
 A pipeline line may carry `rateMonth` where the SKU has no rate in `pricing.json`
 (Secret Protection, for example), so the quantity stays visible instead of collapsing
 to a bare dollar amount.
+
+**`potential.py` reads the overrides too**, via an optional fifth positional argument
+(defaults to `<RUN>/overrides.json`). Seller-asserted `pipeline` lines become sizing lines
+with `basis: "seller-asserted"`, so a committed deal reaches `potentialArr` and the account
+can rank on its own merit.
+
+> A seller-asserted line **replaces** the modelled line for the same product rather than
+> adding to it. The model estimates whitespace; a known contract is better information than
+> an estimate, and summing the two would count the same seats twice. This matters most for
+> accounts the model scores at zero — an account that already owns a product has no modelled
+> whitespace, so without this it would never enter the candidate pool no matter how large its
+> live deal.
+
+`potential.py` reports `sellerAssertedAccounts` and `overridesUnmatched`. **Check
+`overridesUnmatched` is empty** — a typo'd name fails silently otherwise.
 
 Then apply and re-run the downstream steps:
 
@@ -393,13 +441,13 @@ questions:
 
 | # | Slide | Question |
 |---|---|---|
-| 1 | Q1 scorecard — attainment against Bucket 1 and Bucket 2 | opener |
+| 1 | H1 scorecard — attainment against Bucket 1 and Bucket 2, with the Q1/Q2 split | opener |
 | 2 | H2 learnings carried forward | opener |
 | 3 | Key deals in play — deal, size, stage, where it stands | opener |
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
 | 5 | Portfolio by play, with TPID flags | Q2 |
 | 6 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 7 | Coverage — Q1 target vs what already covers it | Q4 |
+| 7 | Coverage — H1 target vs what already covers it | Q4 |
 | 8 | How I get there — motions and account sequencing | **Q4** |
 | 9 | Microsoft overlap and partner leverage | Q5 |
 | 10 | What's working, what's not | Q6 |
@@ -421,13 +469,14 @@ a hole when it is a surplus. Slides 7 and 11 resolve the sign into words and, wh
 only nets out because one product over-covers, say so explicitly rather than reporting
 comfort.
 
-**Focus accounts are H1-scoped; targets and coverage are Q1-scoped.** The two windows are
-deliberately different. The account list answers "who do I work for the half"; the number
-answers "am I covered this quarter". `crm_context.py` dates every opportunity against both
-windows (`inH1`, `inQ1`) so a deal landing later in the half still appears on the deal slide
-instead of vanishing from a Q1-only filter.
+**Focus accounts, targets and coverage are all H1-scoped.** `crm_context.py` still dates every
+opportunity against both windows (`inH1`, `inQ1`), and `targets.json` still holds per-quarter
+quota, so the Q1 view remains available — the deck reports the half and shows the Q1/Q2 split
+underneath, because the half is not evenly loaded. Watch for a bucket whose Q1 coverage runs
+far ahead of its H1 coverage: that is pipeline concentrated in one quarter, and it should be
+presented as concentration risk rather than comfort.
 
-**Coverage is stated per bucket on its own terms.** Bucket 1 is `attained + dated Q1
+**Coverage is stated per bucket on its own terms.** Bucket 1 is `attained + dated H1
 pipeline`; Bucket 2 is the run-rate carry alone. Presenting both as one blended percentage
 hides the fact that they fail in completely different ways — Bucket 1 by a deal slipping,
 Bucket 2 by consumption churning.
