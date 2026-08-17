@@ -105,22 +105,31 @@ def write(path, focus, potential, partners, report):
           {4: money, 5: money, 13: count})
 
     # 2 — the sizing audit. This is the sheet that answers "where did that number come
-    # from", one row per product line with its rate and basis.
+    # from", one row per product line with its rate and basis. The final column carries
+    # any data-quality flag on the signal this line was sized from, so an assumption
+    # worth challenging is visible next to the dollars it produced rather than buried.
     sheet = book.add_worksheet("Sizing Detail")
+    flags_by_account = (potential or {}).get("dataQualityFlags") or {}
     rows = []
     for account in accounts:
+        account_flags = flags_by_account.get(account.get("salesforceId")) or []
         for line in product_lines(account):
+            metric = (line.get("metric") or "").lower()
+            check = "; ".join(
+                flag["detail"] for flag in account_flags
+                if flag["signal"] == "activeCommitters" and "committer" in metric
+            )
             rows.append([
                 account.get("name", ""), account.get("tier", ""),
                 line.get("product", ""), line.get("metric", ""),
                 line.get("quantity", 0) or 0, line.get("rate", 0) or 0,
                 line.get("basis", ""), line.get("value", 0) or 0,
-                line.get("note", ""),
+                line.get("note", ""), check or "\u2014",
             ])
     table(sheet, 0,
           ["Account", "Tier", "Product", "Metric", "Quantity", "Rate (annual)", "Basis",
-           "Sized value", "How this line was derived"],
-          rows, [30, 17, 14, 14, 12, 14, 11, 14, 62],
+           "Sized value", "How this line was derived", "Check before quoting"],
+          rows, [30, 17, 14, 14, 12, 14, 11, 14, 62, 62],
           {4: count, 5: money, 7: money})
 
     # 3 — triggers, with the citation attached. An undated or uncited trigger never

@@ -390,6 +390,19 @@ record of what the upload said; the focus pack carries the corrected figure. Tha
 deliberate — the two are answering different questions, and overwriting the upload would
 destroy the evidence that a correction was needed.
 
+### The flag that tells you a correction is needed
+
+A correction only helps if someone notices the number is wrong. `potential.py` therefore
+flags any account whose active committers exceed its licensed GHE/VS seats by more than
+**1.5×**, and reports them under `dataQualityFlags`. The flag text lands in the
+**`Check before quoting`** column of the focus workbook's `Sizing Detail` sheet, on the
+GHAS row it affects — so the assumption is legible next to the dollars it produced.
+
+A high ratio is not automatically an error: contractors and monorepo automation inflate the
+cloud-wide count legitimately. The flag asserts nothing; it just makes the largest available
+distortion arguable before the number is quoted. Once a seller states the real figure with
+a `signals` override, the flag clears, because the question has been answered.
+
 Then apply and re-run the downstream steps:
 
 ```bash

@@ -230,6 +230,38 @@ def corrected_signals(account, override):
     return signals, applied
 
 
+# An account whose committer count runs far ahead of the seats it actually licenses is
+# not necessarily wrong - contractors and monorepo bots inflate the cloud-wide figure -
+# but it is the single largest distortion available to this model, because GHAS bills
+# per committer. Surfacing the ratio makes the assumption arguable before it is quoted.
+COMMITTER_SEAT_RATIO = 1.5
+
+
+def data_quality_flags(signals, corrections):
+    """Flag sizing inputs a seller should confirm before the number leaves the room."""
+    flags = []
+    if "activeCommitters" in corrections:
+        return flags  # already corrected by the seller; nothing left to challenge
+
+    committers = float(signals.get("activeCommitters") or 0)
+    seats = max(
+        float(signals.get("gheSeats") or 0),
+        float(signals.get("vsBundleSeats") or 0),
+    )
+    if seats > 0 and committers > seats * COMMITTER_SEAT_RATIO:
+        flags.append({
+            "signal": "activeCommitters",
+            "severity": "check",
+            "detail": (
+                f"{committers:,.0f} active committers against {seats:,.0f} licensed seats "
+                f"({committers / seats:.1f}x). GHAS is sized per committer, so if the "
+                f"committer count includes people outside the GHAS scope the sizing is "
+                f"overstated. Confirm the number, then correct it with a `signals` override."
+            ),
+        })
+    return flags
+
+
 def size_account(account, actuals, rates, override=None):
     """Convert an account's whitespace signals into dollars, with basis tags."""
     signals, corrections = corrected_signals(account, override)
@@ -342,6 +374,7 @@ def size_account(account, actuals, rates, override=None):
         "aiu": aiu,
         "current": state,
         "signalCorrections": corrections,
+        "dataQualityFlags": data_quality_flags(signals, corrections),
         "sizingCoverage": "sized" if lines else "unsized",
     }
 
@@ -427,6 +460,10 @@ def main():
         "signalCorrections": {
             key: entry["signalCorrections"]
             for key, entry in sized.items() if entry.get("signalCorrections")
+        },
+        "dataQualityFlags": {
+            key: entry["dataQualityFlags"]
+            for key, entry in sized.items() if entry.get("dataQualityFlags")
         },
         "overridesUnmatched": unmatched,
     }

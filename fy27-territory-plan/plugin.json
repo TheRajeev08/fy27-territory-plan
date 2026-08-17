@@ -1,7 +1,7 @@
 {
   "name": "fy27-territory-plan",
   "description": "Build an FY27 GitHub territory plan from a SuperDash export, classified into the Innovate, Trust, and Scale revenue plays and enriched live from Salesforce and Gong using the invoking teammate's own credentials. Renders an interactive app, exports an Excel workbook, and builds both a 10-slide H1 leadership deck scored against the teammate's quota targets and a 21-slide evidence pack.",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "author": {
     "name": "Rajeev Ranjan",
     "email": "TheRajeev08@users.noreply.github.com"
