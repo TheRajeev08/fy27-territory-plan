@@ -45,6 +45,42 @@ drifting away from the workbook it is supposed to summarise.
 
 `SCRIPTS` is this skill's `scripts/` directory. `RUN` is the territory-plan run directory.
 
+### 0. Re-base sizing on live licensing (recommended)
+
+The SuperDash upload reports signals org-wide, so it systematically overstates the population
+an account is actually billed for. GHAS is the worst case, because GHAS bills per active
+committer and the upload counts every committer in the tenant. Live licensing is what GitHub
+itself bills, so it is the better basis.
+
+Gather, per account: `revenue-mcp-server/get_salesforce_account` returns a `github_accounts`
+array of `{slug, namespace}`; call `revenue-mcp-server/get_licensing_summary` for each. Store
+the responses **verbatim** — the parser depends on the exact keys — in
+`<RUN>/licensing/raw.json`:
+
+```json
+{"gatheredAt": "...", "accounts": {
+  "<salesforceId>": {"name": "...", "githubAccounts": [...],
+                     "summaries": [{"slug": "...", "namespace": "...", "summary": { ... }}],
+                     "status": "ok"}}}
+```
+
+Then normalise:
+
+```bash
+python3 SCRIPTS/licensing.py "<RUN>"
+```
+
+Writes `<RUN>/licensing.json`, keyed by Salesforce Account ID and summed across an account's
+tenants. `potential.py` and `plays.py` pick it up automatically if it is present.
+
+**Who to gather.** Re-basing only ever reduces a number, so an account outside the focus set can
+only be displaced by one already above the focus floor. Gather everything at or above the floor,
+re-run, and if the floor drops far enough to admit an account you have not gathered, gather that
+one too and repeat until the set is stable.
+
+**An absent reading is not a zero.** An account with no GHEC tenant, or a live count of zero,
+keeps its upload figure and is labelled — it is never silently sized to nothing.
+
 ### 1. Size the potential
 
 ```bash
@@ -52,10 +88,30 @@ python3 SCRIPTS/potential.py "<RUN>/fy27-territory-plan.json" "<RUN>"
 ```
 
 Sizes each account from its observed product signals using the rates in `pricing.json`. Every
-sized line carries a **basis**: `observed` (this account's own price), `list` (published GitHub
-pricing), or `derived` (a median where no list price exists — GHE only). Accounts with no product
-signal are not sized; they are reported as needing discovery. Nothing is ever sized without a
-signal.
+sized line carries a **basis**, in precedence order:
+
+| Basis | Meaning |
+|---|---|
+| `seller-asserted` | a quantity the customer has agreed to (`pipeline` override) |
+| `seller-corrected` | a telemetry input the seller has verified (`signals` override) |
+| `live` | read from GitHub licensing rather than the upload |
+| `observed` | this account's own effective price |
+| `list` | published GitHub pricing |
+| `derived` | a median where no list price exists — GHE only |
+
+Where `licensing.json` is present, Copilot is sized as *(licensed seats − seats already on
+Copilot)* and GHAS as *(billable committers − committers already licensed)*. **GHE is not
+re-based** — it keeps its existing derivation. A seller assertion or correction always wins over
+live data: the seller knows something the telemetry does not.
+
+Accounts with no product signal are not sized; they are reported as needing discovery. Nothing is
+ever sized without a signal.
+
+**Team-plan accounts.** GHAS is not sold on GitHub Team, so any GHAS line against a Team account
+prices something the customer could never be invoiced for. Where live licensing shows a Team
+plan, the GHAS line is dropped, a GHE consolidation line is sized off the Team seats already in
+use, and `plays.py` moves the account to **Scale** — unless an explicit seller `play` override
+says otherwise. This is invisible in the upload; only live licensing exposes it.
 
 Writes `<RUN>/potential.json`.
 

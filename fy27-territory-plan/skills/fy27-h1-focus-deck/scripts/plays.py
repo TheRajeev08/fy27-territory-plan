@@ -64,7 +64,7 @@ def norm(name):
     return "".join(ch for ch in (name or "").lower() if ch.isalnum())
 
 
-def refine(report, crm, overrides):
+def refine(report, crm, overrides, licensing=None):
     # workbook.py owns the ladder and the play copy; import it rather than restate it,
     # so the rule cannot drift between the app build and this refinement. It ships as
     # a sibling skill in both the dev tree and the published plugin.
@@ -141,6 +141,32 @@ def refine(report, crm, overrides):
         if old_play != new_play:
             changes.append((account.get("name"), old_play, new_play, basis))
 
+    # Team-plan accounts are a ladder blind spot. SuperDash reports their committers, so
+    # the ladder reads them as a security play, but GHAS is not sold on Team - the motion
+    # is consolidation onto GHE. Live licensing is the only place this is visible, so the
+    # correction lands here. An explicit seller play override still wins.
+    team_plan = set(licensing or ())
+    for account in report.get("accounts", []) or []:
+        sid = account.get("salesforceId") or ""
+        if sid not in team_plan:
+            continue
+        override = ov_accounts.get(sid) or by_norm.get(norm(account.get("name")))
+        if override and override.get("play"):
+            continue
+        old_play = account.get("primaryPlay")
+        if old_play == "Scale":
+            continue
+        account["primaryPlay"] = "Scale"
+        account["plays"] = ["Scale"] + [p for p in account.get("plays", [])
+                                        if p not in ("Scale", "Unclassified")]
+        account["playBasis"] = ("On a GitHub Team plan, not Enterprise. GHAS is not "
+                                "available on Team, so the motion is consolidation onto "
+                                "GHE before any security or Copilot expansion.")
+        account["winPlan"] = " ".join(guidance(p) for p in account["plays"][:2])
+        account["nextAction"] = next_action("Scale")
+        account["dashboards"] = dashboards("Scale", sid)
+        changes.append((account.get("name"), old_play, "Scale", account["playBasis"]))
+
     summary = {}
     for account in report.get("accounts", []) or []:
         play = account.get("primaryPlay") or "Unclassified"
@@ -161,8 +187,10 @@ def main():
         raise SystemExit("Cannot read %s" % report_path)
     crm = load(os.path.join(run_dir, "crm-context.json"), {}) or {}
     overrides = load(os.path.join(run_dir, "overrides.json"), {}) or {}
+    live = (load(os.path.join(run_dir, "licensing.json"), {}) or {}).get("accounts", {}) or {}
+    team_plan = {sid for sid, v in live.items() if v.get("planType") == "team"}
 
-    changes, unknown = refine(report, crm, overrides)
+    changes, unknown = refine(report, crm, overrides, team_plan)
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=1)
 

@@ -262,7 +262,15 @@ def data_quality_flags(signals, corrections):
     return flags
 
 
-def size_account(account, actuals, rates, override=None):
+# A Team-plan account cannot buy GHAS - the product is not sold on that plan - so any
+# GHAS line against one prices something the customer could never be invoiced for. The
+# real motion is consolidation onto GHE, sized off the Team seats they already run.
+TEAM_PLAN_NOTE = ("On a GitHub Team plan, not Enterprise. GHAS is not available on Team, "
+                  "so the motion is platform consolidation onto GHE, sized off the Team "
+                  "seats already in use")
+
+
+def size_account(account, actuals, rates, override=None, licensing=None):
     """Convert an account's whitespace signals into dollars, with basis tags."""
     signals, corrections = corrected_signals(account, override)
     prices = observed_prices(actuals)
@@ -278,18 +286,62 @@ def size_account(account, actuals, rates, override=None):
     ghas_covered = max(0, int(float(signals.get("ghasSeats") or 0)))
     committers = max(0, committers_total - ghas_covered)
 
+    # Live licensing outranks the upload, because it is what GitHub actually bills.
+    # It never outranks the seller: an explicit correction or an agreed deal is a
+    # harder fact than a telemetry reading, so both are left alone below.
+    live = licensing or {}
+    live_plan = live.get("planType")
+    team_plan = live_plan == "team"
+    copilot_basis = None
+    ghas_basis = None
+    rebased = {}
+
+    if live:
+        live_seats = int(live.get("enterpriseSeatsConsumed") or 0) + int(live.get("teamSeatsConsumed") or 0)
+        live_copilot = int(live.get("copilotSeats") or 0)
+        live_gap = max(0, live_seats - live_copilot)
+        if live_seats > 0:
+            rebased["copilot"] = {"was": copilot_seats, "now": live_gap,
+                                  "seats": live_seats, "existing": live_copilot}
+            copilot_seats = live_gap
+            copilot_basis = "live"
+
+        if not team_plan and "activeCommitters" not in corrections:
+            live_committers = int(live.get("maxCommitters") or 0)
+            live_ghas = int(live.get("ghasMeteredCommitters") or 0)
+            if live_committers > 0:
+                gap = max(0, live_committers - live_ghas)
+                rebased["ghas"] = {"was": committers, "now": gap,
+                                   "committers": live_committers, "existing": live_ghas}
+                committers = gap
+                ghas_basis = "live"
+
+    if team_plan:
+        # Drop the modelled GHAS line entirely and replace it with the conversion.
+        rebased["ghas"] = {"was": committers, "now": 0, "reason": "team plan"}
+        committers = 0
+        team_seats = int(live.get("teamSeatsConsumed") or 0) or int(live.get("enterpriseSeatsConsumed") or 0)
+        if team_seats > 0:
+            ado_seats = team_seats
+
     lines = []
 
     if copilot_seats > 0:
         rate, basis = rates.copilot_seat_year(prices.get("Copilot"))
+        note = "GHE/VS seats without Copilot today"
+        if copilot_basis == "live":
+            r = rebased["copilot"]
+            note = ("%d licensed seats live, %d already on Copilot; upload said %d"
+                    % (r["seats"], r["existing"], r["was"]))
         lines.append({
             "product": "Copilot",
             "metric": "seats",
             "quantity": copilot_seats,
             "rate": rate,
-            "basis": basis,
+            "basis": copilot_basis or basis,
+            "priceBasis": basis,
             "value": money(copilot_seats * rate),
-            "note": "GHE/VS seats without Copilot today",
+            "note": note,
         })
 
     if committers > 0:
@@ -303,12 +355,20 @@ def size_account(account, actuals, rates, override=None):
                      % (int(float(was or 0)),
                         (" - " + str((override or {}).get("signalsReason"))
                          if (override or {}).get("signalsReason") else "")))
+        elif ghas_basis == "live":
+            r = rebased["ghas"]
+            note = ("%d billable committers live, %d already licensed; upload implied %d"
+                    % (r["committers"], r["existing"], r["was"]))
+        if "activeCommitters" in corrections:
+            line_basis = "seller-corrected"
+        else:
+            line_basis = ghas_basis or basis
         lines.append({
             "product": "GHAS",
             "metric": "committers",
             "quantity": committers,
             "rate": rate,
-            "basis": "seller-corrected" if "activeCommitters" in corrections else basis,
+            "basis": line_basis,
             "priceBasis": basis,
             "value": money(committers * rate),
             "note": note,
@@ -321,9 +381,10 @@ def size_account(account, actuals, rates, override=None):
             "metric": "seats",
             "quantity": ado_seats,
             "rate": rate,
-            "basis": basis,
+            "basis": "live" if team_plan else basis,
+            "priceBasis": basis,
             "value": money(ado_seats * rate),
-            "note": "Azure DevOps TAM available to migrate",
+            "note": TEAM_PLAN_NOTE if team_plan else "Azure DevOps TAM available to migrate",
         })
 
     # Seller-asserted lines replace the modelled line for the same product. A quantity
@@ -375,6 +436,11 @@ def size_account(account, actuals, rates, override=None):
         "current": state,
         "signalCorrections": corrections,
         "dataQualityFlags": data_quality_flags(signals, corrections),
+        "liveBasis": {
+            "available": bool(live),
+            "planType": live_plan,
+            "rebased": rebased,
+        },
         "sizingCoverage": "sized" if lines else "unsized",
     }
 
@@ -400,6 +466,10 @@ def main():
     by_account = raw.get("accounts", {})
     rates = Rates(pricing)
 
+    # Live licensing is optional. Where it is absent the model falls back to the upload
+    # and says so on the line, because an absent reading is not evidence of zero.
+    licensing = (load(os.path.join(run_dir, "licensing.json"), {}) or {}).get("accounts", {}) or {}
+
     sized = {}
     overrides = (load(overrides_path, {}) or {}).get("accounts", {}) or {}
     by_norm = {norm_name(k): v for k, v in overrides.items()}
@@ -411,7 +481,7 @@ def main():
         if record:
             matched.add(name)
         sized[sid or name] = size_account(
-            account, by_account.get(sid), rates, record)
+            account, by_account.get(sid), rates, record, licensing.get(sid))
 
     unmatched = sorted(k for k in overrides if norm_name(k) not in {norm_name(m) for m in matched})
 
@@ -445,8 +515,10 @@ def main():
     out = {
         "generatedFrom": os.path.basename(report_path),
         "pricingBasis": {
-            "order": "observed > list > derived",
+            "order": "seller-asserted > seller-corrected > live > observed > list > derived",
             "derivedUsedFor": "GitHub Enterprise per-seat (no public list price)",
+            "liveUsedFor": ("Copilot seat gap and GHAS billable committers, read from "
+                            "GitHub licensing rather than the upload"),
         },
         "assumptions": pricing.get("assumptions", {}),
         "accounts": sized,
@@ -464,6 +536,15 @@ def main():
         "dataQualityFlags": {
             key: entry["dataQualityFlags"]
             for key, entry in sized.items() if entry.get("dataQualityFlags")
+        },
+        "liveBasis": {
+            "accountsRebased": sum(1 for e in sized.values()
+                                   if e.get("liveBasis", {}).get("rebased")),
+            "accountsWithLiveData": sum(1 for e in sized.values()
+                                        if e.get("liveBasis", {}).get("available")),
+            "teamPlanAccounts": sorted(
+                key for key, e in sized.items()
+                if e.get("liveBasis", {}).get("planType") == "team"),
         },
         "overridesUnmatched": unmatched,
     }

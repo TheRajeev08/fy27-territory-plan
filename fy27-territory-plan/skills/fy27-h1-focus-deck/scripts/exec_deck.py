@@ -806,11 +806,22 @@ def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=
 
     col_w = float((right_w - Inches(0.52) - Inches(0.24)) / 2)
     row_h = float(Inches(0.52))
-    shown = rest[:LIST_ROWS * 2]
+    # Derive the row capacity from the panel rather than assuming it. When the list
+    # overflows, the "+N more" footer needs its own band at the bottom; a fixed row
+    # count silently spends that band and the last row lands on top of the footer.
+    list_top = float(panel_top + Inches(0.58))
+    list_bottom = float(panel_top + panel_h - Inches(0.24))
+    rest_count = len(rest)
+    capacity = max(1, int((list_bottom - list_top) // row_h))
+    if rest_count > capacity * 2:
+        # Overflow: give the footer a row's worth of clearance.
+        capacity = max(1, int((list_bottom - float(Inches(0.34)) - list_top) // row_h))
+    list_rows = min(LIST_ROWS, capacity)
+    shown = rest[:list_rows * 2]
     for index, account in enumerate(shown):
-        col, row = divmod(index, LIST_ROWS)
+        col, row = divmod(index, list_rows)
         x = float(right_x + Inches(0.26)) + col * (col_w + float(Inches(0.24)))
-        y = float(panel_top + Inches(0.58)) + row * row_h
+        y = list_top + row * row_h
         tier = int(account.get("msftTier") or 3)
         name_w = int(col_w - Inches(0.78))
         # Truncate the composed string, not the name alone: the rank prefix takes width

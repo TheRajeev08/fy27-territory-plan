@@ -129,7 +129,7 @@ def write(path, focus, potential, partners, report):
     table(sheet, 0,
           ["Account", "Tier", "Product", "Metric", "Quantity", "Rate (annual)", "Basis",
            "Sized value", "How this line was derived", "Check before quoting"],
-          rows, [30, 17, 14, 14, 12, 14, 11, 14, 62, 62],
+          rows, [30, 17, 14, 14, 12, 14, 16, 14, 62, 62],
           {4: count, 5: money, 7: money})
 
     # 3 — triggers, with the citation attached. An undated or uncited trigger never
