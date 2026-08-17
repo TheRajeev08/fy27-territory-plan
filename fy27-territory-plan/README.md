@@ -83,8 +83,8 @@ locally. Engagement simply stays **Unknown**, which is reported honestly rather 
 
    > Build my H1 focus accounts deck
 
-   A 20-slide PowerPoint naming 30–50 focus accounts for the half, sized in AIU, Copilot seats and
-   GHE + GHAS, with the execution plan grounded in GitHub's Product Adoption Framework, Microsoft
+   A 13-slide leadership deck plus a 21-slide evidence pack naming 30–50 focus accounts
+   for the half, sized in AIU, Copilot seats and GHE + GHAS, with the execution plan grounded in GitHub's Product Adoption Framework, Microsoft
    and partner leverage, an honest working / not-working read, and the asks of leadership. It ships
    with a companion evidence workbook whose `Sizing Detail` sheet gives one row per sized line with
    its rate and basis, so any figure on a slide can be traced in a single lookup.

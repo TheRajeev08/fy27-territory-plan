@@ -354,6 +354,42 @@ can rank on its own merit.
 `potential.py` reports `sellerAssertedAccounts` and `overridesUnmatched`. **Check
 `overridesUnmatched` is empty** — a typo'd name fails silently otherwise.
 
+### Correcting a wrong telemetry input: `signals`
+
+Some SuperDash figures are reported org-wide and are the wrong *basis* for a quote even
+when they are internally consistent. The clearest case is **active committers**: the upload
+counts every cloud user who pushed in 90 days, which can be far larger than the population
+actually in scope for GHAS — and because GHAS sizes per committer, a wrong committer count
+is the single largest distortion available to this model.
+
+A seller who has verified the real number states it:
+
+```json
+"<account name>": {
+  "signals": { "activeCommitters": 374 },
+  "signalsReason": "SuperDash reports 989 cloud committers org-wide; 374 verified with the customer as in scope for GHAS."
+}
+```
+
+Any key already present in the account's `revenueSignals` can be corrected —
+`activeCommitters`, `copilotWhitespace`, `adoWhitespace`, `ghasSeats`, `gheSeats`. An
+**unknown key is ignored**, because a typo would otherwise size off a field nothing reads.
+
+> **This is not the `pipeline` override, and must not be used as one.** `pipeline` asserts a
+> deal the customer has agreed to and flows into H1 coverage. `signals` only corrects an
+> input to the whitespace model — it changes `potentialArr` and therefore ranking, and it
+> never touches pipeline or attainment. Using `pipeline` to fix a bad telemetry reading
+> would silently inflate coverage.
+
+The corrected line renders with `basis: "seller-corrected"` and its note records what the
+upload said, the corrected value, and the stated reason, so the number stays traceable to
+whoever asserted it. `potential.py` also reports every correction under `signalCorrections`.
+
+**Corrections apply at sizing, not at ingest.** The whole-book workbook stays a faithful
+record of what the upload said; the focus pack carries the corrected figure. That is
+deliberate — the two are answering different questions, and overwriting the upload would
+destroy the evidence that a correction was needed.
+
 Then apply and re-run the downstream steps:
 
 ```bash

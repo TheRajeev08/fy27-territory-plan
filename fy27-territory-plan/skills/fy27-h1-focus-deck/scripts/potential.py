@@ -198,9 +198,41 @@ def override_lines(record, rates, prices):
     return lines
 
 
+def corrected_signals(account, override):
+    """Apply seller-verified corrections to the telemetry a sizing line is built from.
+
+    SuperDash reports some signals org-wide, so a figure can be internally consistent
+    and still be the wrong basis for a quote - active committers counted across every
+    cloud user, for instance, when only a subset is in scope for GHAS. A seller who has
+    verified the real number with the customer needs a way to say so that survives the
+    next run.
+
+    This is deliberately NOT the `pipeline` override. Pipeline asserts a deal the
+    customer has agreed to and flows into H1 coverage; this only corrects an input to
+    the whitespace model, so it must not be counted as pipeline. Corrections are
+    recorded on the line's note so the number stays traceable to whoever asserted it.
+    """
+    signals = dict(account.get("revenueSignals", {}) or {})
+    applied = {}
+    for key, value in ((override or {}).get("signals") or {}).items():
+        if key not in signals:
+            # An unknown key is a typo, not a correction. Silently adding it would
+            # size off a field nothing reads.
+            continue
+        try:
+            corrected = float(value)
+        except (TypeError, ValueError):
+            continue
+        if corrected < 0:
+            continue
+        applied[key] = {"was": signals.get(key), "now": corrected}
+        signals[key] = corrected
+    return signals, applied
+
+
 def size_account(account, actuals, rates, override=None):
     """Convert an account's whitespace signals into dollars, with basis tags."""
-    signals = account.get("revenueSignals", {}) or {}
+    signals, corrections = corrected_signals(account, override)
     prices = observed_prices(actuals)
     state = current_state(actuals)
 
@@ -231,14 +263,23 @@ def size_account(account, actuals, rates, override=None):
     if committers > 0:
         rate, basis = rates.ghas_committer_year(prices.get("Advanced Security"))
         sku = rates.assumptions.get("ghasSkuForSizing", "codeSecurity")
+        note = ("%d active committers (L90d) not covered by GHAS today; GHAS bills "
+                "per active committer - sized as %s" % (committers, sku))
+        if "activeCommitters" in corrections:
+            was = corrections["activeCommitters"]["was"]
+            note += ("; seller-corrected from %d reported by the upload%s"
+                     % (int(float(was or 0)),
+                        (" - " + str((override or {}).get("signalsReason"))
+                         if (override or {}).get("signalsReason") else "")))
         lines.append({
             "product": "GHAS",
             "metric": "committers",
             "quantity": committers,
             "rate": rate,
-            "basis": basis,
+            "basis": "seller-corrected" if "activeCommitters" in corrections else basis,
+            "priceBasis": basis,
             "value": money(committers * rate),
-            "note": "%d active committers (L90d) not covered by GHAS today; GHAS bills per active committer - sized as %s" % (committers, sku),
+            "note": note,
         })
 
     if ado_seats > 0:
@@ -300,6 +341,7 @@ def size_account(account, actuals, rates, override=None):
         "bases": bases,
         "aiu": aiu,
         "current": state,
+        "signalCorrections": corrections,
         "sizingCoverage": "sized" if lines else "unsized",
     }
 
@@ -382,6 +424,10 @@ def main():
         "accountsTotal": len(sized),
         "accountsWithArr": sum(1 for e in sized.values() if not e["current"]["greenfield"]),
         "sellerAssertedAccounts": sorted(matched),
+        "signalCorrections": {
+            key: entry["signalCorrections"]
+            for key, entry in sized.items() if entry.get("signalCorrections")
+        },
         "overridesUnmatched": unmatched,
     }
 
