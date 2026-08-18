@@ -711,6 +711,44 @@ def _ghcp_sprint_rows(focus, contacts=None, licensing=None):
     return rows
 
 
+PRIORITY_HEADERS = ["GHCP Segment", "H1 #", "GHCP #", "Account", "Play", "Tier", "Motion",
+                    "GHE Seats", "H1 Pipeline"]
+
+
+def priority_rows(focus, licensing):
+    """The must-win accounts in H1 rank order.
+
+    The queue is sorted by Copilot opportunity, which deliberately scatters the H1 priority
+    order - the top-ranked account can sit near the bottom because its GHE has not landed yet.
+    This block restores the priority view on the same sheet and carries each account's GHCP
+    position, so the two orderings can be read against each other rather than in separate tabs.
+    """
+    accounts = (focus or {}).get("accounts") or []
+    if not accounts:
+        return []
+    placing = {}
+    if ghcp is not None and licensing:
+        for g in ghcp.build(accounts, (licensing or {}).get("accounts") or {}):
+            placing[g["key"]] = (g["segment"], g["segmentRank"], g["gheSeats"])
+    must_win = [a for a in accounts if str(a.get("tier", "")).startswith("Tier 1")]
+    # No tiering in this run: fall back to the top of the composite rank rather than nothing.
+    if not must_win:
+        must_win = sorted(accounts, key=lambda a: a.get("rank") or 9999)[:10]
+    must_win.sort(key=lambda a: a.get("rank") or 9999)
+
+    rows = []
+    for a in must_win:
+        segment, seg_rank, ghe = placing.get(a.get("key"), ("", "", None))
+        rows.append([
+            segment, a.get("rank") or "", seg_rank or "", a.get("name", ""),
+            a.get("play", ""), a.get("tier", ""),
+            _LED_LABEL.get(int(a.get("msftTier") or 3), "Seller led"),
+            ghe or "",
+            _money(float(a.get("h1PipelineValue") or 0)),
+        ])
+    return rows
+
+
 def ghcp_summary_rows(focus, licensing):
     """Segment subtotals for the block above the queue, plus a plain-language note each."""
     if ghcp is None or not licensing:
@@ -1179,6 +1217,16 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
         for offset, text in enumerate(summary_notes):
             ws.write(note_row + offset, 0, text, note_fmt)
         table_start = note_row + len(summary_notes) + 2
+
+        prio = priority_rows(focus, licensing)
+        if prio:
+            ws.write(table_start - 1, 0,
+                     "PRIORITY ACCOUNTS - H1 RANK ORDER (must-win; GHCP # is the account's "
+                     "position within its segment in the queue below)", section_fmt)
+            write_table(ws, table_start, PRIORITY_HEADERS, prio,
+                        SPRINT_WIDTHS_GHCP[:len(PRIORITY_HEADERS)], teal, "PriorityAccounts")
+            table_start += len(prio) + 3
+
         ws.write(table_start - 1, 0, "THE QUEUE - work top-down within each segment", section_fmt)
     write_table(ws, table_start, sprint_headers, sprint_rows, sprint_widths, amber, "SprintFocus")
     ws.set_row(0, 26)
