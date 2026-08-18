@@ -100,6 +100,33 @@ directory:
 of its own, ranked so the most senior name appears first. Where no contact exists the row says
 so rather than leaving a blank a reader would mistake for a rendering fault.
 
+#### GHCP segmentation
+
+When `licensing.json` is also present, the queue is re-ordered around GitHub Copilot rather
+than composite rank, because seat attach and token activation are different conversations with
+different personas. `ghcp.py` splits the book into three segments:
+
+- **Copilot seat expansion** — GHE licences exist without Copilot. Addressable headroom is
+  `installed GHE seats − Copilot seats`. Agreed-but-unlanded GHE deliberately does *not* count:
+  a seat that has not landed cannot have Copilot attached to it.
+- **AIU activation** — Copilot seats are sold but users are under the 1,900 credits/user/month
+  bundled with the seat. Measured per user, not per account.
+- **Land GHE first** — no GHE landed, so there is nothing for Copilot to attach to.
+
+An account appears in exactly one segment, chosen by *seats at stake* (`headroom` vs
+`dormant seats`) rather than dollars. Overage revenue is legitimately zero until an account
+exhausts its allowance, so a dollar comparison would always favour seat expansion and would
+push a large activation case into the wrong segment for the sake of a handful of seats.
+
+Seat prize uses the account's own observed Copilot rate where it has billing history, but only
+if that rate falls inside a plausibility band around list. A blended realised rate is not the
+price of the next seat — an account that added seats recently annualises far below what it
+actually pays, and pricing new seats off that number understates the prize. Rejected rates fall
+back to list and record the reason in the Prize Basis column.
+
+Without `licensing.json` the sheet falls back to the 18-column focus layout and says so in its
+source line.
+
 ### 5. Render in the app
 
 ```

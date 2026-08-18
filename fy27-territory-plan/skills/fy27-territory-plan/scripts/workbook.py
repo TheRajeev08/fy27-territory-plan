@@ -1,6 +1,12 @@
 import csv, datetime, json, math, os, re, sys, zipfile
 from xml.etree import ElementTree as ET
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import ghcp
+except ImportError:  # GHCP segmentation is additive; the sheet degrades without it.
+    ghcp = None
+
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main", "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
 
 def cell_value(cell, shared):
@@ -594,6 +600,21 @@ SPRINT_HEADERS_SCORE = [
 ]
 SPRINT_WIDTHS_SCORE = [8, 28, 14, 13, 30, 60, 14, 13, 36, 45, 16]
 
+# GHCP is the sprint priority, so the queue leads with the two Copilot motions: attaching
+# seats to GHE licences already paid for, and getting the users on existing seats to consume
+# the credits those seats include. Every GHCP figure below is derived from licensing and
+# billing data by ghcp.py; nothing here is asserted.
+SPRINT_HEADERS_GHCP = [
+    "GHCP Segment", "GHCP #", "H1 #", "Account", "Play", "Tier", "Motion",
+    "GHE Seats", "Copilot Seats", "Attach %", "Seat Headroom",
+    "Credits/User/Mo", "Allowance Used", "Dormant Seats",
+    "Seat Prize (annual)", "Prize Basis", "GHCP Next Step",
+    "Why Now", "Persona", "Owner", "Exit Criteria", "Open Pipeline",
+    "Key Contacts", "Win Plan",
+]
+SPRINT_WIDTHS_GHCP = [22, 8, 7, 30, 11, 20, 13, 11, 13, 10, 13, 15, 14, 13,
+                      17, 30, 62, 46, 28, 26, 44, 14, 34, 58]
+
 _LED_LABEL = {1: "Microsoft led", 2: "Partner led", 3: "Seller led"}
 
 
@@ -647,12 +668,101 @@ def _focus_sprint_rows(focus, contacts=None):
     return rows
 
 
-def sprint_sheet_spec(sprint, focus, contacts=None):
+def _ghcp_sprint_rows(focus, contacts=None, licensing=None):
+    """Order the queue by GHCP opportunity and carry the seat and credit facts on each row."""
+    if ghcp is None or not licensing:
+        return []
+    accounts = (focus or {}).get("accounts") or []
+    if not accounts:
+        return []
+    lic_accounts = (licensing or {}).get("accounts") or {}
+    graded = ghcp.build(accounts, lic_accounts)
+    by_key = {a.get("key"): a for a in accounts}
+    by_id = (contacts or {}).get("accounts", {}) if isinstance(contacts, dict) else {}
+
+    rows = []
+    for g in graded:
+        a = by_key.get(g["key"], {})
+        action = a.get("nextAction") or {}
+        triggers = [_trigger_text(t) for t in (a.get("triggers") or [])]
+        why = "; ".join(t for t in triggers if t) or a.get("playPriorityReason", "")
+        open_pipe = sum(float(o.get("amount") or 0) for o in (a.get("openPipeline") or [])
+                        if not o.get("stale"))
+        people = a.get("contacts") or by_id.get(a.get("salesforceId")) or []
+        who = "; ".join(f'{c.get("name", "")} ({c.get("title", "")})'.strip() for c in people)
+        used = g["aiuAllowanceUsed"]
+        rows.append([
+            g["segment"], g["segmentRank"], g["h1Rank"], g["name"],
+            a.get("play", ""), a.get("tier", ""),
+            _LED_LABEL.get(int(a.get("msftTier") or 3), "Seller led"),
+            g["gheSeats"] or "", g["copilotSeats"] or "",
+            f'{g["attachRate"]:.0%}' if g["attachRate"] is not None else "",
+            g["headroom"] or "",
+            f'{g["aiuCreditsPerUserMonth"]:,}' if g["aiuCreditsPerUserMonth"] is not None else "",
+            f"{used:.0%}" if used is not None else "",
+            g["aiuDormantSeats"] or "",
+            _money(g["prize"]), g["rateBasis"], g["nextStep"],
+            why, action.get("persona", ""), action.get("owner", ""),
+            action.get("exitCriteria", "") or action.get("exit", ""),
+            _money(open_pipe),
+            who or "No contact on file - find one before booking",
+            a.get("winPlan", ""),
+        ])
+    return rows
+
+
+def ghcp_summary_rows(focus, licensing):
+    """Segment subtotals for the block above the queue, plus a plain-language note each."""
+    if ghcp is None or not licensing:
+        return [], []
+    accounts = (focus or {}).get("accounts") or []
+    if not accounts:
+        return [], []
+    graded = ghcp.build(accounts, (licensing or {}).get("accounts") or {})
+    t = ghcp.totals(graded)
+    rows, notes = [], []
+    for segment in ghcp.SEGMENT_ORDER:
+        s = t[segment]
+        rows.append([
+            segment, s["accounts"], s["gheSeats"], s["copilotSeats"], s["headroom"],
+            # A computed subtotal of zero is a fact, not an absent figure, so it is shown.
+            _money(s["prize"]) or "$0", s["dormantSeats"],
+        ])
+        notes.append(f"{segment} - {ghcp.SEGMENT_BLURB[segment]}")
+    b = t["_book"]
+    rows.append([
+        f'All {b["accounts"]} accounts', b["accounts"], "", b["copilotSeats"], b["headroom"],
+        _money(b["prize"]), b["dormantSeats"],
+    ])
+    notes.append(
+        f'AIU overage revenue is ${b["overageValue"]:,.0f} today: no account has exhausted its '
+        f'included allowance, so {b["dormantSeats"]:,.0f} of {b["copilotSeats"]:,} Copilot seats '
+        "are not yet returning the value they were bought for. Activation protects the renewal "
+        "and earns the right to expand seats."
+    )
+    return rows, notes
+
+
+GHCP_SUMMARY_HEADERS = ["GHCP Segment", "Accounts", "GHE Seats", "Copilot Seats",
+                        "Seat Headroom", "Seat Prize (annual)", "Dormant Seats"]
+# Deliberately the queue's own widths: both tables occupy the same columns, and the queue is
+# the sheet's main content, so it owns the layout.
+GHCP_SUMMARY_WIDTHS = SPRINT_WIDTHS_GHCP[:len(GHCP_SUMMARY_HEADERS)]
+
+
+def sprint_sheet_spec(sprint, focus, contacts=None, licensing=None):
     """Pick the sprint source and return (headers, rows, widths, source label)."""
+    ghcp_rows = _ghcp_sprint_rows(focus, contacts, licensing)
+    if ghcp_rows:
+        return (SPRINT_HEADERS_GHCP, ghcp_rows, SPRINT_WIDTHS_GHCP,
+                "Ranked H1 focus list, re-ordered around GHCP: seat expansion first, then AIU "
+                "activation, then accounts where GHE has to land before Copilot has anything "
+                "to attach to. Seller overrides applied.")
     focus_rows = _focus_sprint_rows(focus, contacts)
     if focus_rows:
         return (SPRINT_HEADERS_FOCUS, focus_rows, SPRINT_WIDTHS_FOCUS,
-                "Ranked H1 focus list (focus-accounts.json), seller overrides applied.")
+                "Ranked H1 focus list (focus-accounts.json), seller overrides applied. "
+                "GHCP segmentation unavailable - no licensing data in this run.")
     return (SPRINT_HEADERS_SCORE, _sprint_rows(sprint), SPRINT_WIDTHS_SCORE,
             "Trigger-scored shortlist (sprint-focus.json).")
 
@@ -701,7 +811,7 @@ def _sheet_xml(rows, widths=None, freeze_row=None, filter_row=None, merges=None,
     return xml, rel_xml
 
 
-def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None):
+def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None, licensing=None):
     """Dependency-free XLSX writer, used when xlsxwriter is unavailable.
 
     This was previously also named write_xlsx, so the xlsxwriter version below silently
@@ -709,10 +819,12 @@ def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None):
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     accounts = report.get("accounts") or []
-    _sprint_headers, _sprint_spec_rows, _sprint_widths, _sprint_source = sprint_sheet_spec(sprint, focus, contacts)
-    _score_col = (_sprint_headers.index("Score") if "Score" in _sprint_headers
-                  else _sprint_headers.index("Sprint Score"))
-    _sprint_top_score = _sprint_spec_rows[0][_score_col] if _sprint_spec_rows else ""
+    _sprint_headers, _sprint_spec_rows, _sprint_widths, _sprint_source = sprint_sheet_spec(sprint, focus, contacts, licensing)
+    # The GHCP layout carries no score column at all, so this is best-effort.
+    _score_col = next((_sprint_headers.index(h) for h in ("Score", "Sprint Score", "Seat Prize (annual)")
+                       if h in _sprint_headers), None)
+    _sprint_top_score = (_sprint_spec_rows[0][_score_col]
+                         if _sprint_spec_rows and _score_col is not None else "")
     summary = report.get("playSummary") or []
     stats = report.get("stats") or {}
     activity = report.get("activity") or {}
@@ -845,16 +957,16 @@ def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None):
             if rel_xml:
                 z.writestr(f"xl/worksheets/_rels/sheet{i}.xml.rels", rel_xml)
 
-def write_xlsx(path, report, sprint=None, focus=None, contacts=None):
+def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=None):
     try:
         import xlsxwriter
     except ImportError:
         # Fall back to the dependency-free writer rather than failing the whole export.
-        return write_xlsx_minimal(path, report, sprint, focus, contacts)
+        return write_xlsx_minimal(path, report, sprint, focus, contacts, licensing)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     accounts = report.get("accounts") or []
     # The exec summary card must count whatever the Sprint Focus sheet actually shows.
-    sprint_rows_count = sprint_sheet_spec(sprint, focus, contacts)[1]
+    sprint_rows_count = sprint_sheet_spec(sprint, focus, contacts, licensing)[1]
     stats = report.get("stats") or {}
     activity = report.get("activity") or {}
     summary = {p.get("play"): p for p in report.get("playSummary") or []}
@@ -951,6 +1063,11 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None):
     ws.merge_range("A2:H2", "A governed account strategy for Innovate, Trust, Scale, and meeting-booking execution", subtitle_fmt)
     ws.merge_range("A3:H3", f"Source: {report.get('sourceName', '')}   |   Refreshed: {report.get('generatedAt', '')}", subtitle_fmt)
     ws.merge_range("A5:H5", "PORTFOLIO AT A GLANCE", section_fmt)
+    ghcp_book = {}
+    if ghcp is not None and licensing and (focus or {}).get("accounts"):
+        ghcp_book = ghcp.totals(
+            ghcp.build((focus or {}).get("accounts") or [],
+                       (licensing or {}).get("accounts") or {}))["_book"]
     cards = [
         ("Normalized Accounts", report.get("accountCount", 0)),
         ("Rows Collapsed", stats.get("duplicateRows", 0)),
@@ -961,46 +1078,56 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None):
         ("Parent/Child Groups", stats.get("parentChildGroups", 0)),
         ("Activity Window", f'{activity.get("windowDays", 0)} days'),
     ]
+    if ghcp_book:
+        # GHCP is the sprint priority, so its two measures belong on the front page.
+        cards += [
+            ("Copilot Seat Headroom", ghcp_book["headroom"]),
+            ("Headroom Value", f'${ghcp_book["prize"]:,.0f}'),
+            ("Copilot Seats Live", ghcp_book["copilotSeats"]),
+            ("Dormant Seats", ghcp_book["dormantSeats"]),
+        ]
     for i, (label, value) in enumerate(cards):
         col = (i % 4) * 2
         row = 5 + (i // 4) * 2
         ws.write(row, col, label, label_fmt)
         ws.write(row, col + 1, value, metric_fmt)
         ws.set_row(row, 25)
-    ws.merge_range("A10:H10", "PRIMARY PLAY COVERAGE", section_fmt)
+    # Four extra GHCP cards add a card band, so everything below shifts by two rows.
+    off = 2 if ghcp_book else 0
+    ws.merge_range(9 + off, 0, 9 + off, 7, "PRIMARY PLAY COVERAGE", section_fmt)
     play_rows = []
     for play in ("Innovate", "Trust", "Scale", "Unclassified"):
         p = summary.get(play, {})
         play_rows.append([play, p.get("accounts", 0), p.get("qualifiedAccounts", 0), p.get("highConfidence", 0), p.get("twoWayAccounts", 0)])
-    write_table(ws, 10, ["Play", "Primary Accounts", "Qualified incl. Secondary", "High Confidence", "Two-way Accounts"], play_rows, [18, 16, 22, 16, 16], blue, "PlayCoverage")
-    ws.merge_range("A17:H17", "HOW I WILL EXECUTE", section_fmt)
+    write_table(ws, 10 + off, ["Play", "Primary Accounts", "Qualified incl. Secondary", "High Confidence", "Two-way Accounts"], play_rows, [18, 16, 22, 16, 16], blue, "PlayCoverage")
+    ws.merge_range(16 + off, 0, 16 + off, 7, "HOW I WILL EXECUTE", section_fmt)
     execution = [
         ("1. Segment", "Assign each normalized account to a primary play from observed product signals; retain secondary plays for expansion context."),
         ("2. Prioritize", "Sequence accounts by verified two-way engagement, meeting activity, potential proxy, renewal horizon, and execution readiness."),
         ("3. Mobilize", "Use the play-specific motion, target persona, named contacts, and evidence to create a relevant meeting hypothesis."),
         ("4. Advance", "Exit discovery only when the sponsor, business problem, success measure, dated next step, and owner are explicit."),
     ]
-    for r, (label, statement) in enumerate(execution, 18):
+    for r, (label, statement) in enumerate(execution, 18 + off):
         ws.write(r, 0, label, play_formats["Innovate"])
         ws.merge_range(r, 1, r, 7, statement, note_fmt)
         ws.set_row(r, 34)
-    ws.merge_range("A23:H23", "VISUAL SUMMARY", section_fmt)
+    ws.merge_range(22 + off, 0, 22 + off, 7, "VISUAL SUMMARY", section_fmt)
     chart = wb.add_chart({"type": "doughnut"})
-    chart.add_series({"name": "Primary accounts", "categories": ["Executive Summary", 11, 0, 14, 0], "values": ["Executive Summary", 11, 1, 14, 1], "points": [{"fill": {"color": blue}}, {"fill": {"color": teal}}, {"fill": {"color": purple}}, {"fill": {"color": slate}}]})
+    chart.add_series({"name": "Primary accounts", "categories": ["Executive Summary", 11 + off, 0, 14 + off, 0], "values": ["Executive Summary", 11 + off, 1, 14 + off, 1], "points": [{"fill": {"color": blue}}, {"fill": {"color": teal}}, {"fill": {"color": purple}}, {"fill": {"color": slate}}]})
     chart.set_title({"name": "Primary Play Mix"})
     chart.set_legend({"position": "bottom"})
     chart.set_style(10)
-    ws.insert_chart("A24", chart, {"x_scale": 1.05, "y_scale": 1.1})
+    ws.insert_chart(23 + off, 0, chart, {"x_scale": 1.05, "y_scale": 1.1})
     chart2 = wb.add_chart({"type": "column"})
-    chart2.add_series({"name": "Accounts", "categories": ["Executive Summary", 11, 0, 14, 0], "values": ["Executive Summary", 11, 1, 14, 1], "fill": {"color": blue}, "border": {"none": True}})
+    chart2.add_series({"name": "Accounts", "categories": ["Executive Summary", 11 + off, 0, 14 + off, 0], "values": ["Executive Summary", 11 + off, 1, 14 + off, 1], "fill": {"color": blue}, "border": {"none": True}})
     chart2.set_title({"name": "Accounts by Primary Play"})
     chart2.set_legend({"none": True})
     chart2.set_y_axis({"major_gridlines": {"visible": False}})
-    ws.insert_chart("E24", chart2, {"x_scale": 1.05, "y_scale": 1.1})
-    ws.merge_range("A40:H40", "GOVERNANCE", section_fmt)
-    ws.merge_range("A41:H43", "Decision support only: potential is a relative proxy, not ARR or forecast. Activity and two-way status reflect available Salesforce evidence; Unknown is not cold. Seller validation is required before committing territory, forecast, or investment decisions.", note_fmt)
-    ws.set_row(40, 24)
-    ws.set_row(41, 32)
+    ws.insert_chart(23 + off, 4, chart2, {"x_scale": 1.05, "y_scale": 1.1})
+    ws.merge_range(39 + off, 0, 39 + off, 7, "GOVERNANCE", section_fmt)
+    ws.merge_range(40 + off, 0, 42 + off, 7, "Decision support only: potential is a relative proxy, not ARR or forecast. Activity and two-way status reflect available Salesforce evidence; Unknown is not cold. Seller validation is required before committing territory, forecast, or investment decisions.", note_fmt)
+    ws.set_row(39 + off, 24)
+    ws.set_row(40 + off, 32)
 
     account_headers = ["Account", "Salesforce ID", "Primary Play", "All Plays", "Capacity", "Renewal", "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way", "Last Activity", "Meetings", "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria", "How to Win", "Evidence", "Key Contacts", "Verify In"]
     all_rows = []
@@ -1037,18 +1164,37 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None):
             ws.conditional_format(9, 7, 8 + len(compact_rows), 7, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
 
     ws = wb.add_worksheet("Sprint Focus")
-    sprint_headers, sprint_rows, sprint_widths, sprint_source = sprint_sheet_spec(sprint, focus, contacts)
-    write_table(ws, 2, sprint_headers, sprint_rows, sprint_widths, amber, "SprintFocus")
+    sprint_headers, sprint_rows, sprint_widths, sprint_source = sprint_sheet_spec(
+        sprint, focus, contacts, licensing)
+    summary_rows, summary_notes = (ghcp_summary_rows(focus, licensing)
+                                   if "GHCP #" in sprint_headers else ([], []))
+    table_start = 2
+    if summary_rows:
+        # Subtotals sit above the queue rather than interleaved, so the queue stays a single
+        # sortable, filterable table. The two tables share columns, so the summary carries no
+        # wide prose column of its own - the explanations go in overflow rows beneath it.
+        write_table(ws, 3, GHCP_SUMMARY_HEADERS, summary_rows, GHCP_SUMMARY_WIDTHS,
+                    amber, "GhcpSummary")
+        note_row = 5 + len(summary_rows)
+        for offset, text in enumerate(summary_notes):
+            ws.write(note_row + offset, 0, text, note_fmt)
+        table_start = note_row + len(summary_notes) + 2
+        ws.write(table_start - 1, 0, "THE QUEUE - work top-down within each segment", section_fmt)
+    write_table(ws, table_start, sprint_headers, sprint_rows, sprint_widths, amber, "SprintFocus")
     ws.set_row(0, 26)
-    ws.write(0, 0, "SPRINT FOCUS - MEETING BOOKING QUEUE", section_fmt)
+    ws.write(0, 0, "SPRINT FOCUS - GHCP BOOKING QUEUE" if summary_rows
+             else "SPRINT FOCUS - MEETING BOOKING QUEUE", section_fmt)
     ws.write(1, 0, f"Source: {sprint_source} Work top-down; every row needs a dated next step and a named owner before it counts.", note_fmt)
     if sprint_rows:
-        score_col = sprint_headers.index("Score") if "Score" in sprint_headers else sprint_headers.index("Sprint Score")
-        ws.conditional_format(3, score_col, 2 + len(sprint_rows), score_col,
-                              {"type": "data_bar", "bar_color": amber})
+        bar_col = next((sprint_headers.index(h) for h in
+                        ("Seat Headroom", "Score", "Sprint Score") if h in sprint_headers), None)
+        if bar_col is not None:
+            ws.conditional_format(table_start + 1, bar_col,
+                                  table_start + len(sprint_rows), bar_col,
+                                  {"type": "data_bar", "bar_color": amber})
     for idx, header in enumerate(sprint_headers):
         if header in ("Why Now", "Next Action", "Win Plan", "Exit Criteria", "Discovery Gaps",
-                      "Triggers", "Key Contacts", "News"):
+                      "Triggers", "Key Contacts", "News", "GHCP Next Step", "Prize Basis"):
             ws.set_column(idx, idx, sprint_widths[idx], body_fmt)
     if "Verify In" in sprint_headers:
         ws.set_column(sprint_headers.index("Verify In"), sprint_headers.index("Verify In"), 28, link_fmt)
@@ -1129,8 +1275,10 @@ def main():
     sprint = _load_json(os.path.join(output_dir, "sprint-focus.json"))
     focus = _load_json(os.path.join(output_dir, "focus-accounts.json"))
     sheet_contacts = _load_json(os.path.join(output_dir, "salesforce-contacts.json"))
-    write_xlsx(workbook_path, report, sprint, focus, sheet_contacts)
-    _headers, sprint_rows, _w, sprint_source = sprint_sheet_spec(sprint, focus, sheet_contacts)
+    # Licensing drives the GHCP segmentation. Absent, the queue falls back to H1 rank order.
+    licensing = _load_json(os.path.join(output_dir, "licensing.json"))
+    write_xlsx(workbook_path, report, sprint, focus, sheet_contacts, licensing)
+    _headers, sprint_rows, _w, sprint_source = sprint_sheet_spec(sprint, focus, sheet_contacts, licensing)
     print(json.dumps({"reportPath": report_path, "workbookPath": workbook_path,
                       "accountCount": report["accountCount"],
                       "sprintRows": len(sprint_rows), "sprintSource": sprint_source}))
