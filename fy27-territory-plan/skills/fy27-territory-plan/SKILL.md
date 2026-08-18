@@ -72,10 +72,33 @@ Never present an unenriched account as cold.
 ```bash
 python3 SCRIPTS/workbook.py "<inputPath>" "<runDir>" "<runDir>/salesforce-activity.json" "<sourceName>"
 python3 SCRIPTS/sprint_score.py "<runDir>/fy27-territory-plan.json"
-python3 SCRIPTS/workbook.py "<inputPath>" "<runDir>" "<runDir>/salesforce-activity.json" "<sourceName>"
+python3 SCRIPTS/workbook.py --from-report "<runDir>"
 ```
 
-The final `workbook.py` call is required: it is what folds the Sprint Focus sheet into the workbook.
+The final call is required: it is what folds the Sprint Focus sheet into the workbook.
+
+**Use `--from-report` for every rebuild after the first.** The normal invocation re-derives
+`fy27-territory-plan.json` from the raw SuperDash export, which silently discards any play
+overrides applied since. `--from-report` rebuilds the workbook from the report already in the
+run directory and writes no JSON, so overrides survive.
+
+#### What lands in the Sprint Focus sheet
+
+The sheet is the meeting-booking queue, and it takes the best source available in the run
+directory:
+
+1. **`focus-accounts.json`** — if an H1 focus run has produced a ranked focus list, that *is*
+   the sprint plan. It already carries the seller's overrides, the agreed play, the tier, the
+   Microsoft/partner motion, the next action and the pipeline. It wins, because re-scoring the
+   raw book here would contradict the deck built from the same run.
+2. **`sprint-focus.json`** — otherwise the trigger-scored shortlist from `sprint_score.py`.
+3. **Neither** — the sheet still renders its header and source line. It must never come out
+   blank; a zero-row `add_table` writes nothing at all, which is how this sheet silently
+   shipped empty.
+
+`salesforce-contacts.json` fills the Key Contacts column when the focus stage has no contacts
+of its own, ranked so the most senior name appears first. Where no contact exists the row says
+so rather than leaving a blank a reader would mistake for a rendering fault.
 
 ### 5. Render in the app
 

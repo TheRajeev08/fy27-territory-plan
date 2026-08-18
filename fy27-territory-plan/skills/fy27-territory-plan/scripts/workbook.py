@@ -577,6 +577,86 @@ def _sprint_rows(sprint):
     return rows
 
 
+# The Sprint Focus sheet is the meeting-booking queue. When an H1 focus run has produced a
+# ranked focus list, that list is the sprint plan: it already carries the seller's overrides,
+# the agreed play, the next action and the pipeline. Re-scoring the raw book here would
+# contradict the deck built from the same run, so the focus list wins when it is present.
+SPRINT_HEADERS_FOCUS = [
+    "Rank", "Account", "Play", "Tier", "Motion", "Score", "Why Now",
+    "Next Action", "Persona", "Owner", "Exit Criteria", "Win Plan",
+    "Open Pipeline", "H1 Pipeline", "Potential", "Renewal", "Key Contacts", "Discovery Gaps",
+]
+SPRINT_WIDTHS_FOCUS = [7, 30, 11, 20, 13, 8, 52, 52, 30, 28, 46, 60, 14, 14, 14, 14, 34, 44]
+
+SPRINT_HEADERS_SCORE = [
+    "Rank", "Account", "Primary Play", "Sprint Score", "Triggers", "Why Now",
+    "Renewal", "Potential", "Key Contacts", "News", "Verify In",
+]
+SPRINT_WIDTHS_SCORE = [8, 28, 14, 13, 30, 60, 14, 13, 36, 45, 16]
+
+_LED_LABEL = {1: "Microsoft led", 2: "Partner led", 3: "Seller led"}
+
+
+def _money(value):
+    """Pipeline figures are rendered as text so a blank never reads as a zero commitment."""
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    return f"${amount:,.0f}" if amount else ""
+
+
+def _trigger_text(trigger):
+    """Focus triggers are dated news/partnership events; scored triggers carry a label."""
+    if not isinstance(trigger, dict):
+        return str(trigger)
+    headline = trigger.get("headline") or trigger.get("label") or trigger.get("type") or ""
+    date = trigger.get("date") or ""
+    detail = trigger.get("detail") or ""
+    text = f"{date}: {headline}".strip(": ") if date else headline
+    return f"{text} - {detail}" if detail and detail != headline else text
+
+
+def _focus_sprint_rows(focus, contacts=None):
+    """Turn the ranked H1 focus list into the meeting-booking queue."""
+    by_id = (contacts or {}).get("accounts", {}) if isinstance(contacts, dict) else {}
+    rows = []
+    for a in (focus or {}).get("accounts") or []:
+        action = a.get("nextAction") or {}
+        triggers = [_trigger_text(t) for t in (a.get("triggers") or [])]
+        why = "; ".join(t for t in triggers if t) or a.get("playPriorityReason", "")
+        open_pipe = sum(float(o.get("amount") or 0) for o in (a.get("openPipeline") or [])
+                        if not o.get("stale"))
+        # The focus stage does not carry contacts; fall back to the run's Salesforce
+        # enrichment so the queue always answers "who do I call".
+        people = a.get("contacts") or by_id.get(a.get("salesforceId")) or []
+        who = "; ".join(f'{c.get("name", "")} ({c.get("title", "")})'.strip() for c in people)
+        rows.append([
+            a.get("rank", ""), a.get("name", ""), a.get("play", ""), a.get("tier", ""),
+            _LED_LABEL.get(int(a.get("msftTier") or 3), "Seller led"),
+            a.get("compositeScore", ""),
+            why,
+            action.get("action", ""), action.get("persona", ""), action.get("owner", ""),
+            action.get("exitCriteria", "") or action.get("exit", ""),
+            a.get("winPlan", ""),
+            _money(open_pipe), _money(a.get("h1PipelineValue")), _money(a.get("potentialArr")),
+            a.get("renewal", "") or "",
+            who or "No contact on file - find one before booking",
+            "; ".join(a.get("discoveryGaps") or []),
+        ])
+    return rows
+
+
+def sprint_sheet_spec(sprint, focus, contacts=None):
+    """Pick the sprint source and return (headers, rows, widths, source label)."""
+    focus_rows = _focus_sprint_rows(focus, contacts)
+    if focus_rows:
+        return (SPRINT_HEADERS_FOCUS, focus_rows, SPRINT_WIDTHS_FOCUS,
+                "Ranked H1 focus list (focus-accounts.json), seller overrides applied.")
+    return (SPRINT_HEADERS_SCORE, _sprint_rows(sprint), SPRINT_WIDTHS_SCORE,
+            "Trigger-scored shortlist (sprint-focus.json).")
+
+
 def _cell(value, style=11, hyperlink=None):
     return {"value": value, "style": style, "hyperlink": hyperlink}
 
@@ -610,7 +690,9 @@ def _sheet_xml(rows, widths=None, freeze_row=None, filter_row=None, merges=None,
         cols = "<cols>" + "".join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i, w in enumerate(widths, 1)) + "</cols>"
     view = f'<sheetViews><sheetView workbookViewId="0" tabSelected="1"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>'
     pane = f'<pane ySplit="{freeze_row}" topLeftCell="A{freeze_row + 1}" activePane="bottomLeft" state="frozen"/>' if freeze_row else ""
-    views = f'<sheetViews><sheetView workbookViewId="0">{pane}<selection activePane="bottomLeft" activeCell="A{(freeze_row or 0) + 1}" sqref="A{(freeze_row or 0) + 1}"/></sheetView></sheetViews>'
+    # CT_Selection's attribute is `pane`, not `activePane`; the latter is only valid on
+    # CT_Pane, and strict readers reject the sheet outright.
+    views = f'<sheetViews><sheetView workbookViewId="0">{pane}<selection pane="bottomLeft" activeCell="A{(freeze_row or 0) + 1}" sqref="A{(freeze_row or 0) + 1}"/></sheetView></sheetViews>'
     filt = f'<autoFilter ref="A{filter_row}:{"%s%d" % (_column_name(len(rows[filter_row - 1])), len(rows))}"/>' if filter_row else ""
     merge_xml = f'<mergeCells count="{len(merges or [])}">' + "".join(f'<mergeCell ref="{m}"/>' for m in merges or []) + "</mergeCells>" if merges else ""
     hyperlink_xml = f"<hyperlinks>{''.join(hyperlinks)}</hyperlinks>" if hyperlinks else ""
@@ -619,10 +701,18 @@ def _sheet_xml(rows, widths=None, freeze_row=None, filter_row=None, merges=None,
     return xml, rel_xml
 
 
-def write_xlsx(path, report, sprint=None):
+def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None):
+    """Dependency-free XLSX writer, used when xlsxwriter is unavailable.
+
+    This was previously also named write_xlsx, so the xlsxwriter version below silently
+    shadowed it and the fallback could never run.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     accounts = report.get("accounts") or []
-    sprint_accounts = (sprint or {}).get("accounts") or []
+    _sprint_headers, _sprint_spec_rows, _sprint_widths, _sprint_source = sprint_sheet_spec(sprint, focus, contacts)
+    _score_col = (_sprint_headers.index("Score") if "Score" in _sprint_headers
+                  else _sprint_headers.index("Sprint Score"))
+    _sprint_top_score = _sprint_spec_rows[0][_score_col] if _sprint_spec_rows else ""
     summary = report.get("playSummary") or []
     stats = report.get("stats") or {}
     activity = report.get("activity") or {}
@@ -660,7 +750,7 @@ def write_xlsx(path, report, sprint=None):
         [_cell("4. Advance", 4), _cell("Exit discovery only when the sponsor, business problem, success measure, dated next step, and owner are explicit.", 14)],
         [],
         [_cell("SPRINT FOCUS", 3)],
-        [_cell("Meeting-booking shortlist", 9), _cell(len(sprint_accounts), 10), _cell("Top score", 9), _cell(sprint_accounts[0].get("sprintScore", "") if sprint_accounts else "", 10), _cell("Scoring note", 9), _cell("Decision-support ranking, not forecast or propensity.", 14)],
+        [_cell("Meeting-booking shortlist", 9), _cell(len(_sprint_spec_rows), 10), _cell("Top score", 9), _cell(_sprint_top_score, 10), _cell("Scoring note", 9), _cell("Decision-support ranking, not forecast or propensity.", 14)],
         [],
         [_cell("GOVERNANCE", 3)],
         [_cell("This workbook is decision support. Potential is a relative proxy, not ARR or forecast. Activity and two-way status reflect available Salesforce evidence; Unknown is not cold. Seller validation is required before committing territory or forecast decisions.", 15)],
@@ -695,10 +785,12 @@ def write_xlsx(path, report, sprint=None):
             rows.append([_cell("Open dashboard" if i == 19 and value else value, 14 if i == 19 and value else (12 if len(rows) % 2 == 0 else 11), value if i == 19 and value else None) for i, value in enumerate(vals)])
         sheet_defs[play] = (rows, [28, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 42, 32, 46, 34, 16], 8, 8, ["A1:T1", "A2:T2"], {"Innovate": "1D4ED8", "Trust": "0F766E", "Scale": "7C3AED", "Unclassified": "475569"}[play])
 
-    sprint_rows = [[_cell(h, 4) for h in ["Rank", "Account", "Primary Play", "Sprint Score", "Triggers", "Why Now", "Renewal", "Potential", "Key Contacts", "News", "Verify In"]]]
-    for row in _sprint_rows(sprint):
-        sprint_rows.append([_cell("Open dashboard" if i == 10 and value else value, 14 if i == 10 and value else (12 if len(sprint_rows) % 2 == 0 else 11), value if i == 10 and value else None) for i, value in enumerate(row)])
-    sheet_defs["Sprint Focus"] = (sprint_rows, [8, 28, 14, 13, 30, 60, 14, 13, 36, 45, 16], 1, 1, [], "F59E0B")
+    headers_s, data_s, widths_s = _sprint_headers, _sprint_spec_rows, _sprint_widths
+    link_col = headers_s.index("Verify In") if "Verify In" in headers_s else -1
+    sprint_rows = [[_cell(h, 4) for h in headers_s]]
+    for row in data_s:
+        sprint_rows.append([_cell("Open dashboard" if i == link_col and value else value, 14 if i == link_col and value else (12 if len(sprint_rows) % 2 == 0 else 11), value if i == link_col and value else None) for i, value in enumerate(row)])
+    sheet_defs["Sprint Focus"] = (sprint_rows, widths_s, 1, 1, [], "F59E0B")
 
     methodology = [
         [_cell("METHODOLOGY & GOVERNANCE", 1)],
@@ -753,18 +845,16 @@ def write_xlsx(path, report, sprint=None):
             if rel_xml:
                 z.writestr(f"xl/worksheets/_rels/sheet{i}.xml.rels", rel_xml)
 
-def write_xlsx(path, report, sprint=None):
+def write_xlsx(path, report, sprint=None, focus=None, contacts=None):
     try:
         import xlsxwriter
     except ImportError:
-        raise SystemExit(
-            "The Excel export needs the 'xlsxwriter' package, which is not installed.\n"
-            "Install it, then run the plan again:\n"
-            "    python3 -m pip install --user xlsxwriter"
-        )
+        # Fall back to the dependency-free writer rather than failing the whole export.
+        return write_xlsx_minimal(path, report, sprint, focus, contacts)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     accounts = report.get("accounts") or []
-    sprint_accounts = (sprint or {}).get("accounts") or []
+    # The exec summary card must count whatever the Sprint Focus sheet actually shows.
+    sprint_rows_count = sprint_sheet_spec(sprint, focus, contacts)[1]
     stats = report.get("stats") or {}
     activity = report.get("activity") or {}
     summary = {p.get("play"): p for p in report.get("playSummary") or []}
@@ -837,6 +927,12 @@ def write_xlsx(path, report, sprint=None):
     def write_table(ws, start_row, headers, rows, widths, tab_color, table_name):
         setup(ws, tab_color, widths)
         ws.freeze_panes(start_row + 1, 0)
+        if not rows:
+            # add_table refuses a zero-row table and silently writes nothing, which is how
+            # an absent sprint input produced a completely blank sheet. Write the header
+            # so the sheet still explains itself.
+            ws.write_row(start_row, 0, headers, section_fmt)
+            return
         ws.add_table(start_row, 0, start_row + len(rows), len(headers) - 1, {
             "name": table_name,
             "style": "Table Style Medium 2",
@@ -861,7 +957,7 @@ def write_xlsx(path, report, sprint=None):
         ("Two-way Accounts", activity.get("twoWayAccounts", 0)),
         ("Activity Coverage", f'{activity.get("coveragePct", 0)}%'),
         ("Unclassified", stats.get("unclassifiedAccounts", 0)),
-        ("Sprint Candidates", len(sprint_accounts)),
+        ("Sprint Candidates", len(sprint_rows_count)),
         ("Parent/Child Groups", stats.get("parentChildGroups", 0)),
         ("Activity Window", f'{activity.get("windowDays", 0)} days'),
     ]
@@ -941,21 +1037,21 @@ def write_xlsx(path, report, sprint=None):
             ws.conditional_format(9, 7, 8 + len(compact_rows), 7, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
 
     ws = wb.add_worksheet("Sprint Focus")
-    sprint_headers = ["Rank", "Account", "Primary Play", "Sprint Score", "Triggers", "Why Now", "Renewal", "Potential", "Key Contacts", "News", "Verify In"]
-    sprint_rows = []
-    for rank, a in enumerate(sprint_accounts, 1):
-        sprint_rows.append([
-            rank, a.get("name", ""), a.get("primaryPlay", ""), a.get("sprintScore", ""),
-            "; ".join(t.get("label", t.get("type", "")) for t in a.get("triggers") or []),
-            a.get("whyNow", ""), a.get("renewal", ""), a.get("revenuePotential", ""),
-            "; ".join(f'{c.get("name", "")} ({c.get("title", "")})' for c in a.get("contacts") or []),
-            "; ".join(n.get("headline", "") for n in a.get("news") or []),
-            (a.get("dashboards") or [{}])[0].get("url", ""),
-        ])
-    write_table(ws, 0, sprint_headers, sprint_rows, [8, 28, 14, 13, 30, 60, 14, 13, 36, 45, 16], amber, "SprintFocus")
-    ws.conditional_format(1, 3, len(sprint_rows), 3, {"type": "data_bar", "bar_color": amber})
-    ws.set_column(4, 9, 42, body_fmt)
-    ws.set_column(10, 10, 28, link_fmt)
+    sprint_headers, sprint_rows, sprint_widths, sprint_source = sprint_sheet_spec(sprint, focus, contacts)
+    write_table(ws, 2, sprint_headers, sprint_rows, sprint_widths, amber, "SprintFocus")
+    ws.set_row(0, 26)
+    ws.write(0, 0, "SPRINT FOCUS - MEETING BOOKING QUEUE", section_fmt)
+    ws.write(1, 0, f"Source: {sprint_source} Work top-down; every row needs a dated next step and a named owner before it counts.", note_fmt)
+    if sprint_rows:
+        score_col = sprint_headers.index("Score") if "Score" in sprint_headers else sprint_headers.index("Sprint Score")
+        ws.conditional_format(3, score_col, 2 + len(sprint_rows), score_col,
+                              {"type": "data_bar", "bar_color": amber})
+    for idx, header in enumerate(sprint_headers):
+        if header in ("Why Now", "Next Action", "Win Plan", "Exit Criteria", "Discovery Gaps",
+                      "Triggers", "Key Contacts", "News"):
+            ws.set_column(idx, idx, sprint_widths[idx], body_fmt)
+    if "Verify In" in sprint_headers:
+        ws.set_column(sprint_headers.index("Verify In"), sprint_headers.index("Verify In"), 28, link_fmt)
 
     ws = wb.add_worksheet("Methodology")
     setup(ws, slate, [24, 70, 70])
@@ -997,30 +1093,47 @@ def write_xlsx(path, report, sprint=None):
     wb.close()
 
 
+def _load_json(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def main():
-    input_path, output_dir = sys.argv[1], sys.argv[2]
-    activity = {}
-    if len(sys.argv) > 3 and os.path.exists(sys.argv[3]):
-        with open(sys.argv[3], encoding="utf-8") as f: activity = json.load(f)
-    source_name = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else os.path.basename(input_path)
-    rows = read_input(input_path)
-    if not rows or "salesforce_name" not in rows[0]:
-        raise SystemExit("Unsupported workbook: expected an Export tab with salesforce_name.")
-    contacts = {}
-    contacts_path = os.path.join(output_dir, "salesforce-contacts.json")
-    if os.path.exists(contacts_path):
-        with open(contacts_path, encoding="utf-8") as f: contacts = json.load(f)
-    report = analyze(rows, source_name, activity, contacts)
+    # --from-report rebuilds the workbook from the report already in the run directory.
+    # The normal path re-derives the report from the raw SuperDash export, which discards
+    # any play overrides applied since, so rebuilding a sheet must never go through it.
+    if sys.argv[1] == "--from-report":
+        output_dir = sys.argv[2]
+        report = _load_json(os.path.join(output_dir, "fy27-territory-plan.json"))
+        if not report:
+            raise SystemExit(f"No fy27-territory-plan.json in {output_dir}.")
+    else:
+        input_path, output_dir = sys.argv[1], sys.argv[2]
+        activity = {}
+        if len(sys.argv) > 3 and os.path.exists(sys.argv[3]):
+            with open(sys.argv[3], encoding="utf-8") as f: activity = json.load(f)
+        source_name = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else os.path.basename(input_path)
+        rows = read_input(input_path)
+        if not rows or "salesforce_name" not in rows[0]:
+            raise SystemExit("Unsupported workbook: expected an Export tab with salesforce_name.")
+        contacts = _load_json(os.path.join(output_dir, "salesforce-contacts.json")) or {}
+        report = analyze(rows, source_name, activity, contacts)
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "fy27-territory-plan.json"), "w", encoding="utf-8") as f:
+            json.dump(report, f)
     os.makedirs(output_dir, exist_ok=True)
     report_path = os.path.join(output_dir, "fy27-territory-plan.json")
     workbook_path = os.path.join(output_dir, "FY27 Territory Plan.xlsx")
-    with open(report_path, "w", encoding="utf-8") as f: json.dump(report, f)
-    sprint = None
-    sprint_path = os.path.join(output_dir, "sprint-focus.json")
-    if os.path.exists(sprint_path):
-        with open(sprint_path, encoding="utf-8") as f: sprint = json.load(f)
-    write_xlsx(workbook_path, report, sprint)
-    print(json.dumps({"reportPath": report_path, "workbookPath": workbook_path, "accountCount": report["accountCount"]}))
+    sprint = _load_json(os.path.join(output_dir, "sprint-focus.json"))
+    focus = _load_json(os.path.join(output_dir, "focus-accounts.json"))
+    sheet_contacts = _load_json(os.path.join(output_dir, "salesforce-contacts.json"))
+    write_xlsx(workbook_path, report, sprint, focus, sheet_contacts)
+    _headers, sprint_rows, _w, sprint_source = sprint_sheet_spec(sprint, focus, sheet_contacts)
+    print(json.dumps({"reportPath": report_path, "workbookPath": workbook_path,
+                      "accountCount": report["accountCount"],
+                      "sprintRows": len(sprint_rows), "sprintSource": sprint_source}))
 
 if __name__ == "__main__":
     main()
