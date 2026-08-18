@@ -1206,6 +1206,21 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
         sprint, focus, contacts, licensing)
     summary_rows, summary_notes = (ghcp_summary_rows(focus, licensing)
                                    if "GHCP #" in sprint_headers else ([], []))
+
+    def prose(row, text):
+        """Write a full-width line of prose without letting it blow up the row height.
+
+        A wrapping format in a single 22-character column makes Excel auto-fit the row to a
+        dozen lines, which pushed the account tables so far down the sheet that they looked
+        missing. Merging across the readable width and pinning the height keeps the text where
+        the reader expects it.
+        """
+        span = 7
+        ws.merge_range(row, 0, row, span, text, note_fmt)
+        chars_per_line = sum(sprint_widths[:span + 1]) if sprint_widths else 120
+        lines = max(1, math.ceil(len(text) / max(chars_per_line, 40)))
+        ws.set_row(row, 14 * lines + 6)
+
     table_start = 2
     if summary_rows:
         # Subtotals sit above the queue rather than interleaved, so the queue stays a single
@@ -1215,7 +1230,7 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
                     amber, "GhcpSummary")
         note_row = 5 + len(summary_rows)
         for offset, text in enumerate(summary_notes):
-            ws.write(note_row + offset, 0, text, note_fmt)
+            prose(note_row + offset, text)
         table_start = note_row + len(summary_notes) + 2
 
         prio = priority_rows(focus, licensing)
@@ -1232,7 +1247,7 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
     ws.set_row(0, 26)
     ws.write(0, 0, "SPRINT FOCUS - GHCP BOOKING QUEUE" if summary_rows
              else "SPRINT FOCUS - MEETING BOOKING QUEUE", section_fmt)
-    ws.write(1, 0, f"Source: {sprint_source} Work top-down; every row needs a dated next step and a named owner before it counts.", note_fmt)
+    prose(1, f"Source: {sprint_source} Work top-down; every row needs a dated next step and a named owner before it counts.")
     if sprint_rows:
         bar_col = next((sprint_headers.index(h) for h in
                         ("Seat Headroom", "Score", "Sprint Score") if h in sprint_headers), None)
