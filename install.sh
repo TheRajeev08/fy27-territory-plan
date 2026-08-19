@@ -94,6 +94,43 @@ else
     fi
 fi
 
+echo "-> Enabling the plugin..."
+SETTINGS="$HOME/.copilot/settings.json"
+KEY="fy27-territory-plan@fy27-territory-plan"
+if python3 - "$SETTINGS" "$KEY" <<'PYEOF'
+import collections, json, os, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path, encoding="utf-8"),
+                     object_pairs_hook=collections.OrderedDict) if os.path.exists(path) else collections.OrderedDict()
+except (ValueError, OSError):
+    sys.exit(1)                      # unreadable or malformed: leave it alone
+if not isinstance(data, dict):
+    sys.exit(1)
+enabled = data.get("enabledPlugins")
+if not isinstance(enabled, dict):
+    enabled = collections.OrderedDict()
+    data["enabledPlugins"] = enabled
+if enabled.get(key) is True:
+    sys.exit(0)
+enabled[key] = True
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)                # atomic: never leaves a half-written settings file
+PYEOF
+then
+    echo "   Enabled."
+else
+    echo ""
+    echo "!  Could not enable the plugin automatically."
+    echo "   The skills stay hidden until it is enabled, so turn it on in the"
+    echo "   Copilot plugin settings, or add this to $SETTINGS:"
+    echo "       \"enabledPlugins\": { \"$KEY\": true }"
+    echo ""
+fi
+
 echo ""
 echo "==================================================="
 echo " Done. Two more steps:"

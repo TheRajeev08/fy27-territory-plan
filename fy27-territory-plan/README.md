@@ -51,6 +51,26 @@ plugin one level down rather than putting `plugin.json` at its root. The repeate
 after cloning is expected.
 </details>
 
+### Copilot can't find the skills
+
+Installing a plugin does not enable it. Until it is enabled the skills stay invisible, so asking
+Copilot to build the plan does nothing. The installer now turns it on for you; if you installed an
+earlier version, or the installer told you it could not, add this to `~/.copilot/settings.json`:
+
+```json
+"enabledPlugins": { "fy27-territory-plan@fy27-territory-plan": true }
+```
+
+Keep any entries already in `enabledPlugins` — add this key alongside them. Then **quit the Copilot
+app completely and reopen it**, and check that `plugin.json` sits one level down:
+
+```bash
+ls ~/.copilot/installed-plugins/fy27-territory-plan/fy27-territory-plan/plugin.json
+```
+
+That nesting is deliberate — the loader looks for `<bundle>/<plugin>/plugin.json`. If your copy has
+`plugin.json` at the top level instead, re-run the installer to lay it out correctly.
+
 ### Requirements
 
 | Requirement | Why |
