@@ -351,6 +351,7 @@ def build(targets, potential, focus, crm):
     return {
         "fiscalYear": targets.get("fiscalYear", ""),
         "half": targets.get("half", ""),
+        "territory": (targets.get("territory") or "").strip(),
         "focusQuarter": targets.get("focusQuarter", "Q1"),
         "basis": targets.get("basis", "net-new"),
         "runRate": {

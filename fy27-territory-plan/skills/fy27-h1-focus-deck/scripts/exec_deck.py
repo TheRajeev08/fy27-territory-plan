@@ -208,8 +208,16 @@ def slide_1_scorecard(deck, coverage, focus):
     b1 = bucket_of(coverage, "Bucket 1")
     b2 = bucket_of(coverage, "Bucket 2")
 
+    eyebrow = " \u00b7 ".join(
+        p for p in (
+            "{} {}".format(coverage.get("fiscalYear") or "FY27",
+                           coverage.get("half") or "H1").strip(),
+            "TERRITORY PLAN",
+            (coverage.get("territory") or "").upper(),
+        ) if p
+    )
     deck.text(slide, MARGIN, Inches(0.52), W - 2 * MARGIN, Inches(0.28),
-              "FY27 H1 \u00b7 TERRITORY PLAN \u00b7 INDIA", size=11, color=ACCENT,
+              eyebrow, size=11, color=ACCENT,
               bold=True, space=True)
     deck.text(slide, MARGIN, Inches(0.86), W - 2 * MARGIN, Inches(0.62),
               "Where I am, and how I make the number", size=32, color=WHITE, bold=True)
