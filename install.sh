@@ -97,9 +97,16 @@ fi
 echo "-> Enabling the plugin..."
 SETTINGS="$HOME/.copilot/settings.json"
 KEY="fy27-territory-plan@fy27-territory-plan"
-if python3 - "$SETTINGS" "$KEY" <<'PYEOF'
+BUNDLE="fy27-territory-plan"
+GH_REPO="TheRajeev08/fy27-territory-plan"
+# Two separate registrations are needed and both are silent when missing:
+#   enabledPlugins        - turns the plugin on
+#   extraKnownMarketplaces - tells the app the bundle exists at all
+# With only the first, the app never browses the bundle directory, so every skill
+# stays invisible while the plugin still shows as enabled. Nothing logs an error.
+if python3 - "$SETTINGS" "$KEY" "$BUNDLE" "$GH_REPO" <<'PYEOF'
 import collections, json, os, sys
-path, key = sys.argv[1], sys.argv[2]
+path, key, bundle, repo = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 try:
     data = json.load(open(path, encoding="utf-8"),
                      object_pairs_hook=collections.OrderedDict) if os.path.exists(path) else collections.OrderedDict()
@@ -107,13 +114,29 @@ except (ValueError, OSError):
     sys.exit(1)                      # unreadable or malformed: leave it alone
 if not isinstance(data, dict):
     sys.exit(1)
+changed = False
+
 enabled = data.get("enabledPlugins")
 if not isinstance(enabled, dict):
     enabled = collections.OrderedDict()
     data["enabledPlugins"] = enabled
-if enabled.get(key) is True:
+    changed = True
+if enabled.get(key) is not True:
+    enabled[key] = True
+    changed = True
+
+markets = data.get("extraKnownMarketplaces")
+if not isinstance(markets, dict):
+    markets = collections.OrderedDict()
+    data["extraKnownMarketplaces"] = markets
+    changed = True
+wanted = {"source": {"source": "github", "repo": repo}}
+if markets.get(bundle) != wanted:
+    markets[bundle] = wanted
+    changed = True
+
+if not changed:
     sys.exit(0)
-enabled[key] = True
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2)
@@ -126,8 +149,9 @@ else
     echo ""
     echo "!  Could not enable the plugin automatically."
     echo "   The skills stay hidden until it is enabled, so turn it on in the"
-    echo "   Copilot plugin settings, or add this to $SETTINGS:"
+    echo "   Copilot plugin settings, or add both of these to $SETTINGS:"
     echo "       \"enabledPlugins\": { \"$KEY\": true }"
+    echo "       \"extraKnownMarketplaces\": { \"$BUNDLE\": { \"source\": { \"source\": \"github\", \"repo\": \"$GH_REPO\" } } }"
     echo ""
 fi
 
