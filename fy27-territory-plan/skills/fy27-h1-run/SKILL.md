@@ -5,6 +5,16 @@ description: "Run the complete FY27 H1 territory build end to end from a SuperDa
 
 # FY27 H1 — End-to-End Run
 
+> **If this file was uploaded into the chat rather than loaded as an installed skill, stop.**
+> It is the front door only: the phase skills and their scripts are not present, so nothing here
+> can actually run. Do not improvise a simplified plan and do not ask for more files to be
+> uploaded — skills load from `~/.copilot/installed-plugins/`, never from chat attachments.
+> Tell the teammate to run this in Terminal, then fully quit Copilot (`Cmd + Q`) and reopen:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/TheRajeev08/fy27-territory-plan/main/install.sh | bash
+> ```
+
 ## Mission
 
 One instruction in, four artefacts out. The teammate gives you a SuperDash export; you return the
