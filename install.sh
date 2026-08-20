@@ -9,6 +9,8 @@ set -u
 
 REPO="https://github.com/TheRajeev08/fy27-territory-plan.git"
 DEST="$HOME/.copilot/installed-plugins/fy27-territory-plan"
+BUNDLE="fy27-territory-plan"
+GH_REPO="TheRajeev08/fy27-territory-plan"
 
 echo ""
 echo "Installing the FY27 Territory Plan plugin..."
@@ -94,16 +96,75 @@ else
     fi
 fi
 
+# Three registrations are needed and every one of them is silent when missing:
+#   config.json installedPlugins - the app's actual registry of what is installed
+#   settings.json enabledPlugins - turns the plugin on
+#   settings.json extraKnownMarketplaces - tells the app where the bundle came from
+# Copying files into installed-plugins/ registers nothing. Without the config.json
+# entry the app never loads the plugin at all, while the settings keys still make it
+# look enabled. No error is logged anywhere.
+register_plugin() {
+    python3 - "$HOME/.copilot/config.json" "$DEST/fy27-territory-plan" "$BUNDLE" <<'PYEOF'
+import collections, hashlib, json, os, re, sys
+path, cache, bundle = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    manifest = json.load(open(os.path.join(cache, "plugin.json"), encoding="utf-8"))
+except (ValueError, OSError):
+    sys.exit(1)
+header, body = "", "{}"
+if os.path.exists(path):
+    raw = open(path, encoding="utf-8").read()
+    match = re.search(r'^\s*\{', raw, flags=re.M)   # the file opens with // comments
+    if not match:
+        sys.exit(1)
+    header, body = raw[:match.start()], raw[match.start():]
+try:
+    data = json.loads(body, object_pairs_hook=collections.OrderedDict)
+except ValueError:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+plugins = data.get("installedPlugins")
+if not isinstance(plugins, list):
+    plugins = []
+entry = collections.OrderedDict([
+    ("name", manifest["name"]),
+    ("marketplace", bundle),
+    ("installed_at", __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")),
+    ("enabled", True),
+    ("version", manifest["version"]),
+    ("cache_path", cache),
+    # Deterministic, so re-running the installer does not churn the file.
+    ("source_sha", hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()),
+])
+existing = next((p for p in plugins if p.get("name") == manifest["name"]), None)
+if existing is not None:
+    entry["installed_at"] = existing.get("installed_at", entry["installed_at"])
+    if existing == entry:
+        sys.exit(0)                  # already correct: leave the file untouched
+    plugins = [p for p in plugins if p.get("name") != manifest["name"]]
+plugins.append(entry)
+data["installedPlugins"] = plugins
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(header + json.dumps(data, indent=2) + "\n")
+os.replace(tmp, path)                # atomic: never leaves a half-written config
+PYEOF
+}
+
+echo "-> Registering the plugin..."
+if register_plugin; then
+    echo "   Registered."
+else
+    echo ""
+    echo "!  Could not register the plugin automatically."
+    echo "   Send this to Rajeev: register_plugin failed"
+    echo ""
+fi
+
 echo "-> Enabling the plugin..."
 SETTINGS="$HOME/.copilot/settings.json"
 KEY="fy27-territory-plan@fy27-territory-plan"
-BUNDLE="fy27-territory-plan"
-GH_REPO="TheRajeev08/fy27-territory-plan"
-# Two separate registrations are needed and both are silent when missing:
-#   enabledPlugins        - turns the plugin on
-#   extraKnownMarketplaces - tells the app the bundle exists at all
-# With only the first, the app never browses the bundle directory, so every skill
-# stays invisible while the plugin still shows as enabled. Nothing logs an error.
 if python3 - "$SETTINGS" "$KEY" "$BUNDLE" "$GH_REPO" <<'PYEOF'
 import collections, json, os, sys
 path, key, bundle, repo = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]

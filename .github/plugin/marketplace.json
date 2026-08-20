@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Run a complete FY27 GitHub territory build from a SuperDash export end to end: accounts classified into the Innovate, Trust and Scale revenue plays, enriched live from Salesforce and Gong on the invoking teammate's own credentials, sized against live licensing, ranked into an H1 focus set and a GHCP sprint priority queue, and rendered as an interactive app, an Excel workbook, a 13-slide leadership deck scored against the teammate's quota, and a 21-slide evidence pack - then verified as shippable before hand-off.",
-    "version": "1.13.2"
+    "version": "1.13.3"
   },
   "plugins": [
     {
       "name": "fy27-territory-plan",
       "description": "Run a complete FY27 GitHub territory build from a SuperDash export end to end: accounts classified into the Innovate, Trust and Scale revenue plays, enriched live from Salesforce and Gong on the invoking teammate's own credentials, sized against live licensing, ranked into an H1 focus set and a GHCP sprint priority queue, and rendered as an interactive app, an Excel workbook, a 13-slide leadership deck scored against the teammate's quota, and a 21-slide evidence pack - then verified as shippable before hand-off.",
-      "version": "1.13.2",
+      "version": "1.13.3",
       "source": {
         "source": "github",
         "repo": "TheRajeev08/fy27-territory-plan",
