@@ -5,6 +5,10 @@ description: "Build the FY27 H1 focus-accounts leadership presentation from a co
 
 # FY27 H1 Focus Accounts — Leadership Presentation
 
+> **Starting from a raw SuperDash export?** Use **fy27-h1-run** instead — it produces the completed
+> territory-plan run this skill needs, then drives this pipeline in order. Use this skill directly
+> when a run already exists and only the decks need building or rebuilding.
+
 ## Mission
 
 Turn a completed territory-plan run into the presentation a sales leader actually asks for:

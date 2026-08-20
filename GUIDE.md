@@ -33,13 +33,19 @@ You never need to do this again.
 
 **2. In Copilot, type:**
 
-> Build my FY27 territory plan
+> Build my FY27 territory plan and leadership deck
+
+(Just the plan, no deck? Ask for **"build my FY27 territory plan"** instead.)
 
 **3. It will ask for your file** — drag the file into the chat window, or paste its location.
 
-**4. Wait 1–2 minutes.** It cleans your list (duplicates, parent/child rollups), sorts every
-account into a play, pulls your live Salesforce and Gong activity using *your* login, and ranks
-who to contact first.
+**4. The first time only, it asks for your territory and quota.** It remembers them, so later runs
+skip straight past. Anything you don't have, say so — it prints **TBD** rather than guessing.
+
+**5. Wait a few minutes.** It cleans your list (duplicates, parent/child rollups), sorts every
+account into a play, pulls your live Salesforce and Gong activity using *your* login, ranks who to
+contact first, and builds your deck. It checks its own work at the end and tells you if anything
+came out thin.
 
 ---
 

@@ -5,6 +5,9 @@ description: "Pull Salesforce activity, contacts, open pipeline, and Gong calls 
 
 # FY27 CRM Enrichment
 
+> This skill is a phase, not an entry point. It is called by **fy27-territory-plan**, which is in
+> turn driven by **fy27-h1-run** for a full build.
+
 ## Mission
 
 Fetch CRM evidence for one seller's book and hand it to `enrich_activity.py` as raw rows. This skill

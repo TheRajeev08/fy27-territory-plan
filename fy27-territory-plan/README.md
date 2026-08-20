@@ -133,12 +133,21 @@ Engagement tiers are evidence-first, not score-first:
 
 ```
 plugin.json
+skills/fy27-h1-run/              front door: end-to-end run, seller profile, run verifier
 skills/fy27-territory-plan/     orchestrator + scripts (workbook, enrichment, sprint, run setup)
 skills/fy27-crm-enrichment/     pinned SOQL and guardrails
 skills/fy27-h1-focus-deck/      H1 focus presentation: sizing, ranking, PPTX, evidence workbook
 extensions/fy27-territory-plan/ canvas that renders the plan in-app
 enrich-test.py                  regression tests for the enrichment transform
 ```
+
+Ask for **"build my FY27 territory plan and leadership deck"** and `fy27-h1-run` drives the other
+three in order. Ask for just the plan, or just a deck rebuild, and the phase skills still run on
+their own.
+
+Your territory and quota live in `~/.copilot/fy27-territory-plan/seller-profile.json`, outside the
+plugin, so upgrading or re-cloning never overwrites them. The shipped `targets.json` is only a
+template; `seller_profile.py render` projects your numbers into each run.
 
 `workbook.py` is the single source of truth for play classification. The browser app's
 `engine-core.js` is parity-tested against it, so the two surfaces cannot drift.

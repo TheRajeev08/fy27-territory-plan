@@ -5,6 +5,11 @@ description: "Build an FY27 GitHub territory plan from a SuperDash export, enric
 
 # FY27 Territory Plan
 
+> **Building the full H1 plan *and* the leadership deck?** Use **fy27-h1-run** instead — it drives
+> this skill, the enrichment and the deck in the right order, and it enforces the licensing-before-
+> workbook-rebuild rule the GHCP sprint queue depends on. Use this skill on its own when the
+> teammate wants only the plan and the workbook.
+
 ## Mission
 
 Turn a seller's SuperDash export into a territory plan they can hand to a sales leader:
