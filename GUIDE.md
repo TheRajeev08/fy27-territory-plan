@@ -25,6 +25,18 @@ show characters as you type, which is normal.
 
 You never need to do this again.
 
+**If the plan doesn't run**, check the install before anything else. Paste this into
+Terminal — it prints exactly what is missing, and it is much faster than describing the
+symptom:
+
+```bash
+bash ~/.copilot/installed-plugins/fy27-territory-plan/doctor.sh
+```
+
+Do **not** upload any of the plugin's files into the Copilot chat window. They are
+documentation, not an installer — Copilot will try to work from them and quietly build a
+stripped-down plan with none of the live data.
+
 ---
 
 ## Every time you want a plan
