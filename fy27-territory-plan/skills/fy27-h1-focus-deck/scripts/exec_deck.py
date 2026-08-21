@@ -78,6 +78,38 @@ CONSUMPTION_TOKEN = {"Innovate": "CfB", "Trust": "GHAS", "Scale": "GHE"}
 # never silently drops to a shorter sequence.
 PAF_STEPS = 4
 
+# The two motions every play runs, and the PAF phase each one draws its key actions from.
+#
+# The split is not a new judgement and carries no tuned threshold: an account that is not
+# yet consuming the play's product is being *landed*, and one that already consumes it is
+# being *expanded*. That is the same `land`/`expand` test `slide_play` already applies to
+# its worked example, read from the account's own consumption string. Because it keys off
+# the product rather than off any territory's shape, a book with no landed accounts simply
+# renders one motion as empty and says so.
+PLAY_MOTION = {
+    "Innovate": {
+        "land": ("SEAT EXPANSION",
+                 "Turn a GHE base with no paid Copilot into landed, active seats"),
+        "expand": ("USAGE EXPANSION",
+                   "Seats are live - convert them into sustained AI usage"),
+    },
+    "Trust": {
+        "land": ("SECURITY ACTIVATION",
+                 "Active committers are unprotected - get scanning switched on"),
+        "expand": ("COVERAGE EXPANSION",
+                   "GHAS is live - widen coverage and remediate the debt behind it"),
+    },
+    "Scale": {
+        "land": ("PLATFORM LANDING",
+                 "Not yet on GHE - consolidate the estate onto the platform"),
+        "expand": ("PLATFORM EXPANSION",
+                   "GHE is in - migrate CI/CD onto Actions and govern at scale"),
+    },
+}
+
+# Six key actions fit the execution slide's taller motion column.
+EXEC_STEPS = 6
+
 # Two columns of seven. Scale is the largest play at 15 accounts, so 14 listed beside
 # the worked example is the binding case.
 LIST_ROWS = 7
@@ -197,6 +229,68 @@ def footprint(text):
                 label = label.replace(plural, singular)
         parts.append("%s %s" % (num(value), label))
     return ", ".join(parts) or "no product footprint recorded"
+
+
+def account_phase(account, by_id, play):
+    """'land' or 'expand' for one account, read from its own consumption string.
+
+    Identical to the test `slide_play` applies to its worked example. Factored out so the
+    execution slide splits the whole play on exactly the same rule the play slide already
+    uses on one account - two different answers to "has this account got the product yet"
+    on adjacent slides would be worse than either answer alone.
+    """
+    record = by_id.get(account.get("salesforceId"), {}) or {}
+    owned = consumption_token(record.get("consumption", ""), CONSUMPTION_TOKEN[play])
+    return "expand" if (owned or 0) > 0 else "land"
+
+
+def motion_split(play, accounts, report):
+    """Split a play's accounts into its land motion and its expand motion."""
+    by_id = {a.get("salesforceId"): a for a in (report or {}).get("accounts", []) or []}
+    split = {"land": [], "expand": []}
+    for account in accounts:
+        split[account_phase(account, by_id, play)].append(account)
+    return split
+
+
+def play_whitespace(licensing, account, play):
+    """The unconverted population for one account, in the unit *this play* sells.
+
+    Each play has a different prize, so a single figure would misstate two of them:
+    Innovate sells Copilot onto GHE seats, Trust sells GHAS onto active committers, and
+    Scale sells the platform to committers not yet on a GitHub seat at all. Reporting
+    Copilot whitespace under a Trust slide would name the wrong prize on a slide a leader
+    will push on.
+
+    Returns None - not zero - when the account was never resolved to a GitHub tenant. A
+    zero means "no headroom", which is a claim; None means "not looked up", which is not.
+    Collapsing the two is how an unlicensed account gets read as a fully-converted one.
+    """
+    record = ((licensing or {}).get("accounts", {}) or {}).get(account.get("salesforceId"))
+    if not record:
+        return None
+    seats = int(record.get("enterpriseSeatsConsumed") or 0)
+    team = int(record.get("teamSeatsConsumed") or 0)
+    committers = int(record.get("maxCommitters") or 0)
+    if play == "Innovate":
+        return max(0, seats - int(record.get("copilotSeats") or 0))
+    if play == "Trust":
+        return max(0, committers - int(record.get("ghasMeteredCommitters") or 0))
+    return max(0, committers - seats - team)
+
+
+# What the whitespace figure counts, per play. Kept beside play_whitespace so the label
+# and the arithmetic can never drift apart.
+WHITESPACE_LABEL = {
+    "Innovate": "COPILOT WHITESPACE",
+    "Trust": "GHAS WHITESPACE",
+    "Scale": "PLATFORM WHITESPACE",
+}
+WHITESPACE_BASIS = {
+    "Innovate": "GHE seats carrying no Copilot",
+    "Trust": "active committers not licensed for GHAS",
+    "Scale": "active committers not yet on a GitHub seat",
+}
 
 
 # ---------------------------------------------------------------- slides
@@ -969,6 +1063,132 @@ def slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names=
     return slide
 
 
+def slide_execution(deck, play, focus, report, paf, licensing, eyebrow):
+    """How the play actually gets run: the two motions, side by side, in PAF steps.
+
+    The play slide answers *which* accounts and *why now*. A leader's next question is
+    always "so what are you actually going to do", and until now that answer only existed
+    in the seller's head. This slide is that answer, and every step in it is a GitHub
+    Product Adoption Framework key action read from paf.json - so the method is sourced
+    rather than asserted, exactly like the worked example on the play slide.
+
+    Nothing here is composed for a particular territory. The motion labels come from
+    PLAY_MOTION, the steps from paf.json, and the account counts from the same land/expand
+    test the play slide uses. A book where every account is already landed renders the
+    land column as "no accounts in this motion" rather than inventing work.
+    """
+    accounts = [a for a in focus.get("accounts", []) if a.get("play") == play]
+    color = PLAY_COLOR[play]
+    split = motion_split(play, accounts, report)
+
+    # Whitespace is summed only over accounts that actually resolved to a tenant, and the
+    # unresolved ones are counted separately, so the headline number is never a floor
+    # dressed up as a total.
+    measured = [play_whitespace(licensing, a, play) for a in accounts]
+    resolved = [v for v in measured if v is not None]
+    whitespace = sum(resolved)
+    unresolved = len(measured) - len(resolved)
+
+    slide = deck.slide(
+        "How I run %s \u00b7 two motions" % play, eyebrow,
+        note="The two motions are split on whether the account already consumes the "
+             "play's product: not yet is a landing motion, already is an expansion "
+             "motion. Every step is a GitHub Product Adoption Framework key action for "
+             "this play, so the sequence is sourced rather than invented.")
+
+    # --- headline strip
+    strip_h = Inches(0.66)
+    deck.fill(slide, MARGIN, BODY_TOP, W - 2 * MARGIN, strip_h, PANEL, line=LINE, radius=True)
+    deck.fill(slide, MARGIN, BODY_TOP, Inches(0.07), strip_h, color)
+
+    chips = [(num(whitespace) if resolved else "n/a", WHITESPACE_LABEL[play], color),
+             (str(len(split["land"])), PLAY_MOTION[play]["land"][0], WHITE),
+             (str(len(split["expand"])), PLAY_MOTION[play]["expand"][0], WHITE)]
+    # Anchored to the right margin rather than a fixed left offset, so the last chip
+    # cannot drift past the panel it sits on when a label or the chip count changes.
+    chip_w = Inches(1.5)
+    chip_gap = Inches(0.12)
+    chip_x = float(W - MARGIN) - (len(chips) * float(chip_w)
+                                  + (len(chips) - 1) * float(chip_gap))
+
+    # The thesis takes whatever the chips leave, so the two can never overlap.
+    thesis_x = float(MARGIN + Inches(0.28))
+    deck.text(slide, Emu(int(thesis_x)), Emu(int(BODY_TOP + Inches(0.19))),
+              Emu(int(chip_x - thesis_x - float(Inches(0.16)))), Inches(0.32),
+              "Land the product where it is absent, grow it where it is already in",
+              size=13, color=TEXT)
+
+    for value, label, chip_color in chips:
+        deck.text(slide, Emu(int(chip_x)), Emu(int(BODY_TOP + Inches(0.09))),
+                  Emu(int(chip_w)), Inches(0.34), value, size=19, color=chip_color,
+                  bold=True, align=PP_ALIGN.RIGHT, wrap=False)
+        deck.text(slide, Emu(int(chip_x)), Emu(int(BODY_TOP + Inches(0.42))),
+                  Emu(int(chip_w)), Inches(0.22), label, size=8.5, color=MUTED,
+                  bold=True, space=True, align=PP_ALIGN.RIGHT, wrap=False)
+        chip_x += float(chip_w + chip_gap)
+
+    # --- one column per motion
+    panel_top = BODY_TOP + Inches(0.84)
+    panel_h = Inches(4.42)
+    col_w = float((W - 2 * MARGIN - Inches(0.2)) / 2)
+
+    for index, phase in enumerate(("land", "expand")):
+        x = float(MARGIN) + index * (col_w + float(Inches(0.2)))
+        label, thesis = PLAY_MOTION[play][phase]
+        members = split[phase]
+        deck.fill(slide, Emu(int(x)), panel_top, Emu(int(col_w)), panel_h,
+                  PANEL, line=LINE, radius=True)
+        inner_x = Emu(int(x + Inches(0.26)))
+        inner_w = Emu(int(col_w - Inches(0.52)))
+
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.2))), inner_w, Inches(0.24),
+                  "%s \u00b7 %d ACCOUNT%s" % (label, len(members),
+                                              "" if len(members) == 1 else "S"),
+                  size=10, color=color, bold=True, space=True, wrap=False)
+        deck.text(slide, inner_x, Emu(int(panel_top + Inches(0.46))), inner_w, Inches(0.24),
+                  truncate_fit(thesis, int(inner_w), 10), size=10, color=MUTED, wrap=False)
+
+        steps = paf_steps(paf, play, phase, limit=EXEC_STEPS)
+        cursor = float(panel_top + Inches(0.82))
+        if not steps:
+            deck.text(slide, inner_x, Emu(int(cursor)), inner_w, Inches(0.6),
+                      "paf.json is missing from the skill, so the key actions for this "
+                      "motion cannot be shown. Rebuild it with build_paf.py.",
+                      size=11, color=WARN)
+        elif not members:
+            # An empty motion is a finding about the book, not a rendering failure, so it
+            # is stated plainly and the sequence is still shown as the method on file.
+            deck.text(slide, inner_x, Emu(int(cursor)), inner_w, Inches(0.4),
+                      "No focus account sits in this motion this half - every %s account "
+                      "is in the other one. The sequence below is the method on file for "
+                      "when one lands here." % play, size=10, color=WARN)
+            cursor += float(Inches(0.46))
+
+        for step_index, action in enumerate(steps, start=1):
+            deck.text(slide, inner_x, Emu(int(cursor)), Inches(0.3), Inches(0.22),
+                      "%d" % step_index, size=11, color=color, bold=True, wrap=False)
+            title_w = int(col_w - Inches(0.84))
+            deck.text(slide, Emu(int(x + Inches(0.58))), Emu(int(cursor)),
+                      Emu(title_w), Inches(0.22),
+                      truncate_fit(action.get("title", ""), title_w, 11),
+                      size=11, color=WHITE, bold=True, wrap=False)
+            deck.text(slide, Emu(int(x + Inches(0.58))), Emu(int(cursor + Inches(0.20))),
+                      Emu(title_w), Inches(0.22),
+                      truncate_fit(action.get("summary", ""), title_w, 9),
+                      size=9, color=MUTED, wrap=False)
+            cursor += float(Inches(0.42))
+
+    note = ("Motions split on the account's own product footprint: no %s yet is a landing "
+            "motion, %s already in place is an expansion motion. Whitespace counts %s. "
+            "Steps are GitHub Product Adoption Framework key actions for %s."
+            % (PLAY_PRODUCT[play], PLAY_PRODUCT[play], WHITESPACE_BASIS[play], play))
+    if unresolved:
+        note += (" Whitespace covers %d of %d accounts; %d had no GitHub tenant to read."
+                 % (len(resolved), len(measured), unresolved))
+    deck.footnote(slide, note)
+    return slide
+
+
 def slide_9_msft_partners(deck, focus, partners, cosell=None):
     slide = deck.slide("Microsoft overlap and partner leverage", "Q5 \u00b7 Co-sell",
                        note="A TPID alone is close to the default state of this book, so it is "
@@ -1307,9 +1527,14 @@ def main():
                "paf.json", {})
     hero_names = load(run_dir, PAF_ACCOUNTS_FILE, {})
     conversations = load(run_dir, CONVERSATIONS_FILE, {})
+    licensing = load(run_dir, "licensing.json", {})
     for play, eyebrow in zip(PLAYS, ("Q2 \u00b7 Innovate", "Q2 \u00b7 Trust", "Q2 \u00b7 Scale")):
         slide_play(deck, play, focus, report, paf, partner_map, eyebrow, hero_names,
                    conversations)
+        # Immediately after each play slide, so "which accounts" and "how I run them" are
+        # read as one pair rather than separated by two other plays.
+        slide_execution(deck, play, focus, report, paf, licensing,
+                        "%s \u00b7 execution" % eyebrow)
     slide_6_the_number(deck, potential, focus, coverage)
     slide_7_coverage(deck, coverage, focus)
     slide_9_msft_partners(deck, focus, partners, cosell)

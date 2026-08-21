@@ -93,6 +93,23 @@ This is not optional polish. The SuperDash export reports signals org-wide and o
 billable population — badly for GHAS, which bills per **active committer**, not per seat. Store the
 `get_licensing_summary` responses verbatim so the sizing can be audited later.
 
+**Gather the whole book, not just the focus set.** The play sheets carry every account, so
+gathering only the top 40 leaves the widest sheets in the workbook sized on the upload alone.
+Work `licensing_worklist.py` in batches and merge each one with `licensing_merge.py` — the cache
+is additive, so an interrupted gather resumes instead of restarting.
+
+**This step must come after step 2, never before.** Licensing is keyed by GitHub slug, slugs come
+off the Salesforce record, and SuperDash rows arrive keyed by name — so the enrichment pass is the
+only thing that makes a row licensable. Without it, every licence field is blank for the whole
+book, not a thin scatter of them. Blank is the correct output there; a zero would claim the
+account has no seats.
+
+**Expect the play mix to move.** Where live licensing shows a Team plan, the GHAS line is dropped
+and the account moves to Scale — GHAS is not sold on Team. That correction now reaches every
+account rather than the ranked 40, so counts shift on the first run after this change.
+`plays.py` writes `reclassification.json`; carry the count into the hand-off so a shifted mix
+reads as a correction with a named cause.
+
 ## Step 4 — actuals, Microsoft overlap, pipeline
 
 Follow **fy27-h1-focus-deck** steps 2, 5 and 6. Tier the Microsoft overlap properly:
@@ -153,8 +170,11 @@ discards every override applied since.
 
 `verify_run.py` exits non-zero when the run is not shippable. It checks that all four artefacts
 exist and are non-trivial, that Sprint Focus is in the **GHCP layout** rather than the fallback,
-that the priority accounts are listed above the queue, that coverage has a denominator, that every
-override matched, and that every trigger is dated. **Fix what it reports; do not explain it away.**
+that the priority accounts are listed above the queue, that the leadership deck carries an
+**execution slide for each of the three plays**, that the play sheets carry the **licence and
+consumption columns**, that enrichment and licensing coverage are both stated as fractions of the
+book, that coverage has a denominator, that every override matched, and that every trigger is
+dated. **Fix what it reports; do not explain it away.**
 
 Then run the deck checks and read the result back:
 
@@ -164,7 +184,7 @@ python3 DECK_SCRIPTS/verify_deck.py "<RUN>/fy27-h1-focus-accounts.pptx"
 ```
 
 `verify_deck.py` passing is **not sufficient** — its geometry checks pass stale numbers happily.
-Read back the rendered text of slides 1, 6, 9 and 10 before handing over.
+Read back the rendered text of slides 1, 6, 7, 12 and 13 before handing over.
 
 ## Rules held throughout
 
@@ -179,8 +199,14 @@ Read back the rendered text of slides 1, 6, 9 and 10 before handing over.
   Copilot attached to it.
 - **State coverage, never imply completeness.** Where activity, partner mapping or Microsoft owner
   data is thin, say so on the slide. That is what makes the asks credible.
-- **Everything stays in the run directory.** `overrides.json`, `asks.json` and `conversations.json`
-  name customers. They never leave it, and they are never committed.
+- **Everything stays in the run directory.** `overrides.json`, `asks.json`, `conversations.json`,
+  `reclassification.json` and the `licensing/` cache all name customers. They never leave it, they
+  are never committed, and they are never written to a shared path where one teammate's book could
+  surface in another's.
+- **Blank, zero and Unknown are three different claims.** A blank licence cell means the lookup did
+  not resolve; a zero means the account genuinely has no seats; `Unknown` engagement means no
+  logged activity matched. They now sit in adjacent columns on the same row. Never convert one into
+  another to make a sheet look complete.
 
 ## Hand-off
 
@@ -189,6 +215,8 @@ Tell the teammate:
 - both deck paths and both workbook paths
 - the account / tier / play mix
 - **coverage per bucket** — this is what leadership pushes on
+- **enrichment and licensing coverage as fractions of the book**, and how many accounts moved play
+  because of live licensing (from `reclassification.json`)
 - how many focus accounts carry a dated trigger and how many do not
 - anything in `overridesUnmatched`
 - every `WARN` from `verify_run.py`, in their words rather than the tool's

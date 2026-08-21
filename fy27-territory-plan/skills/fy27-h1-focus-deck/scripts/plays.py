@@ -139,7 +139,8 @@ def refine(report, crm, overrides, licensing=None):
         account["nextAction"] = next_action(new_play)
         account["dashboards"] = dashboards(new_play, sid)
         if old_play != new_play:
-            changes.append((account.get("name"), old_play, new_play, basis))
+            changes.append((account.get("name"), old_play, new_play, basis,
+                            "signal"))
 
     # Team-plan accounts are a ladder blind spot. SuperDash reports their committers, so
     # the ladder reads them as a security play, but GHAS is not sold on Team - the motion
@@ -165,7 +166,8 @@ def refine(report, crm, overrides, licensing=None):
         account["winPlan"] = " ".join(guidance(p) for p in account["plays"][:2])
         account["nextAction"] = next_action("Scale")
         account["dashboards"] = dashboards("Scale", sid)
-        changes.append((account.get("name"), old_play, "Scale", account["playBasis"]))
+        changes.append((account.get("name"), old_play, "Scale", account["playBasis"],
+                        "licensing"))
 
     summary = {}
     for account in report.get("accounts", []) or []:
@@ -194,14 +196,35 @@ def main():
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=1)
 
+    # Widening licensing to the whole book means this correction now reaches every
+    # account, not just the ranked ones, so play counts shift on the first run after
+    # that change. A shifted mix with no named cause reads as the tool drifting. Write
+    # the before/after down so it reads as a correction instead.
+    #
+    # It names accounts, so it stays in the run directory under the same rule as
+    # overrides.json and conversations.json.
+    licence_moves = [c for c in changes if c[4] == "licensing"]
+    reclass_path = os.path.join(run_dir, "reclassification.json")
+    with open(reclass_path, "w", encoding="utf-8") as fh:
+        json.dump({
+            "reclassified": len(changes),
+            "licenceDriven": len(licence_moves),
+            "signalDriven": len(changes) - len(licence_moves),
+            "accounts": [{"name": n, "from": old, "to": new, "cause": cause,
+                          "reason": basis}
+                         for n, old, new, basis, cause in changes],
+        }, fh, indent=2, ensure_ascii=False)
+
     print(json.dumps({
         "reportPath": report_path,
+        "reclassificationPath": reclass_path,
         "reclassified": len(changes),
+        "licenceDriven": len(licence_moves),
         "industryUnknown": len(unknown),
         "playSummary": report.get("playSummary"),
     }))
-    for name, old, new, basis in changes:
-        print("  %-44s %-10s -> %-9s %s" % (name[:44], old, new, basis))
+    for name, old, new, basis, cause in changes:
+        print("  %-44s %-10s -> %-9s [%s] %s" % (name[:44], old, new, cause, basis))
     if unknown:
         print("  industry unknown (defaulted to Innovate): %s"
               % ", ".join(sorted(unknown)[:12]))

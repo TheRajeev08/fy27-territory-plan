@@ -138,6 +138,20 @@ def merge(entry):
     }
 
 
+def book_size(run_dir):
+    """How many accounts the enrichment pass resolved, or 0 if it did not run.
+
+    This is the denominator for licensing coverage. Without it a reading count is just
+    a number, and a number with no denominator always sounds like enough.
+    """
+    context = load(os.path.join(run_dir, "crm-context.json")) or {}
+    accounts = context.get("accounts") or {}
+    if accounts:
+        return len(accounts)
+    activity = load(os.path.join(run_dir, "salesforce-activity.json")) or {}
+    return len(activity.get("accounts") or {})
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("usage: licensing.py <runDir> [raw.json]")
@@ -154,17 +168,24 @@ def main():
     # recorded as unavailable so sizing can fall back to the upload and say so, rather
     # than silently pricing a zero.
     unavailable = {}
+    misses = {}
 
     for sid, entry in (raw.get("accounts") or {}).items():
         merged = merge(entry)
         if merged:
             accounts[sid] = merged
         else:
+            status = entry.get("status") or "error"
+            misses[status] = misses.get(status, 0) + 1
             unavailable[sid] = {
                 "name": entry.get("name"),
-                "status": entry.get("status"),
-                "reason": entry.get("error") or entry.get("status") or "no licensing summary returned",
+                "status": status,
+                "reason": entry.get("error") or status or "no licensing summary returned",
             }
+
+    # Coverage is stated as a fraction of the resolved book, not left implied. "63
+    # accounts have live licensing" reads as thorough until you know the book is 251.
+    book = book_size(run_dir)
 
     out = {
         "generatedFrom": os.path.basename(raw_path),
@@ -174,6 +195,9 @@ def main():
         "unavailable": unavailable,
         "accountsWithLiveData": len(accounts),
         "accountsWithoutLiveData": len(unavailable),
+        "bookSize": book,
+        "notAttempted": max(0, book - len(accounts) - len(unavailable)) if book else None,
+        "missesByReason": misses,
         "teamPlanAccounts": sorted(
             v["name"] for v in accounts.values() if v["planType"] == "team"),
     }
@@ -185,6 +209,14 @@ def main():
     print("live licensing: %d accounts | no live data: %d | team-plan: %d"
           % (out["accountsWithLiveData"], out["accountsWithoutLiveData"],
              len(out["teamPlanAccounts"])))
+    if book:
+        print("coverage: %d/%d of the resolved book (%d not attempted)"
+              % (out["accountsWithLiveData"], book, out["notAttempted"]))
+    else:
+        print("coverage: unknown - enrichment did not run, so there is no book to "
+              "measure against and every licence field stays blank")
+    for reason in sorted(misses):
+        print("  no reading: %-22s %d" % (reason, misses[reason]))
     for name in out["teamPlanAccounts"]:
         print("  team plan -> %s" % name)
     print("wrote %s" % path)

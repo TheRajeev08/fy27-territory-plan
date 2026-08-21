@@ -1,6 +1,6 @@
 ---
 name: fy27-h1-focus-deck
-description: "Build the FY27 H1 focus-accounts leadership presentation from a completed territory plan run. Selects 30-50 focus accounts ranked on potential ARR, live open pipeline, active communication and dated live triggers; sizes the opportunity in AIU, Copilot seats, and GHE+GHAS seats/ACR/ARR; scores quota coverage per bucket against the teammate's targets; grounds the execution plan in GitHub's Product Adoption Framework; and renders a 13-slide leadership deck, a 21-slide evidence deck and an evidence workbook. Use for 'H1 focus accounts', 'build my territory presentation', 'which 40 accounts for the half', 'focus account deck', 'leadership deck', 'presentation for my sales leader', 'how do I make my number', or 'H1 plan for FY27'."
+description: "Build the FY27 H1 focus-accounts leadership presentation from a completed territory plan run. Selects 30-50 focus accounts ranked on potential ARR, live open pipeline, active communication and dated live triggers; sizes the opportunity in AIU, Copilot seats, and GHE+GHAS seats/ACR/ARR; scores quota coverage per bucket against the teammate's targets; grounds the execution plan in GitHub's Product Adoption Framework; and renders a 16-slide leadership deck, a 21-slide evidence deck and an evidence workbook. Use for 'H1 focus accounts', 'build my territory presentation', 'which 40 accounts for the half', 'focus account deck', 'leadership deck', 'presentation for my sales leader', 'how do I make my number', or 'H1 plan for FY27'."
 ---
 
 # FY27 H1 Focus Accounts — Leadership Presentation
@@ -77,13 +77,42 @@ python3 SCRIPTS/licensing.py "<RUN>"
 Writes `<RUN>/licensing.json`, keyed by Salesforce Account ID and summed across an account's
 tenants. `potential.py` and `plays.py` pick it up automatically if it is present.
 
-**Who to gather.** Re-basing only ever reduces a number, so an account outside the focus set can
-only be displaced by one already above the focus floor. Gather everything at or above the floor,
-re-run, and if the floor drops far enough to admit an account you have not gathered, gather that
-one too and repeat until the set is stable.
+**Who to gather.** Every account the enrichment pass resolved to a Salesforce ID — not just the
+ranked focus set. The play sheets carry the whole book, so gathering only the top 40 leaves the
+widest sheets sized on the upload alone. Work the queue in batches:
+
+```bash
+python3 SCRIPTS/licensing_worklist.py "<RUN>" --batch 25   # what is still outstanding
+# ... gather those accounts, write the batch to a JSON file ...
+python3 SCRIPTS/licensing_merge.py "<RUN>" "<RUN>/licensing/batch-01.json"
+```
+
+`licensing_worklist.py` reads what is already cached and returns only what is left, ranked
+accounts first. Repeat until `remaining` is 0. The merge only ever adds, so an interrupted gather
+resumes rather than restarting, and a failed retry never erases a good reading.
+
+Record every miss with a status — `no-salesforce-match`, `no-github-account` or `error`. They lead
+to three different actions (fix the name, link the tenant, retry), and collapsing them into one
+bucket tells a seller their book is uncovered when what is actually wrong is three unlinked
+Salesforce records.
+
+**This has to run after enrichment, not before.** Licensing is keyed by GitHub slug, slugs come
+off the Salesforce record, and SuperDash rows arrive keyed by name. The Salesforce resolution the
+enrichment pass performs is the only thing that makes a row licensable at all. No enrichment means
+**every licence field is blank for the whole book** — not a thin set of them.
+
+**The cache stays in the run directory.** `<RUN>/licensing/raw.json` holds customer entitlement
+data. It is under the same never-leaves rule as `overrides.json` and `conversations.json`, and it
+must never be written to a shared path where one teammate's book could surface in another's.
 
 **An absent reading is not a zero.** An account with no GHEC tenant, or a live count of zero,
 keeps its upload figure and is labelled — it is never silently sized to nothing.
+
+**Widening licensing moves accounts between plays.** Where live licensing shows a Team plan,
+`potential.py` drops the GHAS line and `plays.py` moves the account to Scale. That correction now
+reaches the whole book, so play counts shift on the first run after this change.
+`plays.py` writes `<RUN>/reclassification.json` naming every account that moved and why — report
+the count in the hand-off, or a shifted mix reads as the tool drifting.
 
 ### 1. Size the potential
 
@@ -533,7 +562,7 @@ run's own records. Nothing here is authored in chat.
 ### 10. Build the decks and the evidence workbook
 
 ```bash
-# 13-slide executive cut - what gets presented in a 30-minute slot
+# 16-slide executive cut - what gets presented in a 30-minute slot
 python3 SCRIPTS/exec_deck.py "<RUN>" "<RUN>/fy27-h1-leadership.pptx"
 
 # 21-slide evidence pack - the detail brought as backup
@@ -545,7 +574,7 @@ python3 SCRIPTS/focus_workbook.py "<RUN>/fy27-territory-plan.json" "<RUN>/potent
 ```
 
 `exec_deck.py` imports its `Deck` class and theme from `deck.py`, so both decks stay visually
-identical and only one file owns rendering behaviour. Its thirteen slides map to the seven
+identical and only one file owns rendering behaviour. Its sixteen slides map to the seven
 questions:
 
 | # | Slide | Question |
@@ -556,17 +585,27 @@ questions:
 | 4 | Key accounts — Tier 1 must-wins | Q1 |
 | 5 | Portfolio by play, with TPID flags | Q2 |
 | 6 | Innovate — every account, who leads it, one worked in PAF detail | Q2 |
-| 7 | Trust — every account, who leads it, one worked in PAF detail | Q2 |
-| 8 | Scale — every account, who leads it, one worked in PAF detail | Q2 |
-| 9 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
-| 10 | Coverage — H1 target vs what already covers it | Q4 |
-| 11 | Microsoft overlap and partner leverage | Q5 |
-| 12 | What's working, what's not | Q6 |
-| 13 | Asks — leadership and cross-functional | Q7 |
+| 7 | Innovate · Execution — how the play actually gets run | Q2 |
+| 8 | Trust — every account, who leads it, one worked in PAF detail | Q2 |
+| 9 | Trust · Execution — how the play actually gets run | Q2 |
+| 10 | Scale — every account, who leads it, one worked in PAF detail | Q2 |
+| 11 | Scale · Execution — how the play actually gets run | Q2 |
+| 12 | The number — AIU, Copilot seats, GHE + GHAS | Q3 |
+| 13 | Coverage — H1 target vs what already covers it | Q4 |
+| 14 | Microsoft overlap and partner leverage | Q5 |
+| 15 | What's working, what's not | Q6 |
+| 16 | Asks — leadership and cross-functional | Q7 |
 
-**Slides 6–8 are the answer to "how".** Slide 5 stays the one-page overview; each play then
-gets a slide that names *every* focus account in it, so nothing is summarised away, and works
-one account through the play end to end.
+**Slides 6–11 are the answer to "how".** Slide 5 stays the one-page overview; each play then
+gets a pair. The first names *every* focus account in the play, so nothing is summarised away,
+and works one account through end to end. The second is the execution slide: it splits that
+play's accounts into a **landing** motion and an **expansion** motion — on whether the account
+already owns the product, the same test the play slide uses — and lays the PAF sequence for each
+motion side by side, under the licence whitespace the play is going after.
+
+A motion with no accounts says so plainly rather than inventing work for it. The two slides
+answer different questions and are both needed: the play slide is *who*, the execution slide is
+*how*.
 
 **Led by is derived, never typed.** A TPID plus a named Microsoft owner is *Microsoft led*; a
 TPID alone is *Partner led*, because a TPID account needs a partner even where none is mapped
@@ -651,7 +690,7 @@ line with its rate and basis, so any figure on a slide can be traced in a single
 
 Give the teammate:
 
-- both deck paths — the 13-slide leadership cut and the 21-slide evidence pack
+- both deck paths — the 16-slide leadership cut and the 21-slide evidence pack
 - the account/tier/play mix, and total potential ARR against current ARR
 - **the coverage read per bucket**, because that is what leadership will push on
 - how many accounts carry a dated trigger, and how many do not
@@ -661,10 +700,11 @@ Offer to preview the deck by opening the `powerpoint` canvas on the generated fi
 
 ## Execution guidance comes from PAF
 
-The per-play slides (6-8) are grounded in real **Product Adoption Framework** key actions, baked into
+The per-play slides (6-11) are grounded in real **Product Adoption Framework** key actions, baked into
 `paf.json` at build time by `build_paf.py`. Each play gets a **land** sequence for greenfield
 accounts and an **expand** sequence for accounts with a footprint, and the appendix carries the
-real resource links.
+real resource links. That land/expand split is exactly what the execution slides render as their
+two motions, which is why they are sourced rather than composed.
 
 Regenerate only when PAF itself changes:
 
@@ -676,7 +716,7 @@ Do not invent adoption steps in chat. If a key action is not in `paf.json`, it i
 
 ### Grounding a play in the real conversation
 
-The worked-example panel on slides 6-8 leads with what has actually been said to that account,
+The worked-example panel on the play slides leads with what has actually been said to that account,
 not with the generic sequence. Gather it into `<RUN>/conversations.json` before rendering:
 
 ```

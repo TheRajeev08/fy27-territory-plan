@@ -207,6 +207,125 @@ def check_triggers(run_dir, report):
         report.ok("focus:triggerCoverage", "every focus account carries a dated trigger")
 
 
+def check_execution_slides(run_dir, report):
+    """One execution slide per play, or the deck cannot answer "how do I get there".
+
+    That slide used to exist only because it had been built by hand, which meant the
+    deck being held up as the target was the one thing a teammate could not reproduce.
+    It is generated now, so it gets checked - a missing one is a silent regression
+    otherwise, since a 15-slide deck looks perfectly finished.
+    """
+    path = os.path.join(run_dir, LEADERSHIP_DECK)
+    if not os.path.isfile(path):
+        return
+    try:
+        with zipfile.ZipFile(path) as zf:
+            slides = [n for n in zf.namelist()
+                      if n.startswith("ppt/slides/slide") and n.endswith(".xml")]
+            text = " ".join(TAG_RE.sub(" ", zf.read(n).decode("utf-8", "replace"))
+                            for n in slides)
+    except (OSError, zipfile.BadZipFile, KeyError):
+        report.fail("deck:execution", "could not read %s as a deck" % LEADERSHIP_DECK)
+        return
+
+    missing = [play for play in ("INNOVATE", "TRUST", "SCALE")
+               if ("%s · EXECUTION" % play) not in text]
+    if missing:
+        report.fail("deck:execution",
+                    "no execution slide for %s - the deck shows the plays but not how "
+                    "they get run. Rebuild with exec_deck.py." % ", ".join(missing))
+    else:
+        report.ok("deck:execution",
+                  "execution slide present for all three plays (%d slides)" % len(slides))
+
+
+def check_licence_columns(run_dir, report):
+    """Licence and consumption belong on the play sheets, not just the Sprint tab.
+
+    The play sheets carry every account, so if they have no licence column the widest
+    sheets in the workbook are sized on the SuperDash upload alone - the org-wide signal
+    live licensing exists to correct.
+
+    Coverage is reported as a fraction. "63 accounts have live licensing" reads as
+    thorough right up until you learn the book is 251.
+    """
+    path = os.path.join(run_dir, WORKBOOK)
+    if not os.path.isfile(path):
+        return
+    text = xlsx_text(path)
+    if text is None:
+        return
+    wanted = ("GHE Seats", "Copilot Seats", "Copilot Attach %", "Active Committers")
+    absent = [h for h in wanted if h not in text]
+    if absent:
+        report.fail("workbook:licenceColumns",
+                    "the play sheets are missing %s - rebuild with "
+                    "workbook.py --from-report after licensing has landed."
+                    % ", ".join(absent))
+    else:
+        report.ok("workbook:licenceColumns", "licence and consumption columns present")
+
+    licensing = read_json(run_dir, "licensing.json") or {}
+    live = len(licensing.get("accounts") or {})
+    # `bookSize` is written by licensing.py, but a run built before that field existed
+    # still has the enrichment output it was derived from. Fall back to it rather than
+    # telling a teammate their enrichment never ran when it plainly did.
+    book = licensing.get("bookSize") or 0
+    if not book:
+        context = read_json(run_dir, "crm-context.json") or {}
+        book = len(context.get("accounts") or {})
+    if not book:
+        activity = read_json(run_dir, "salesforce-activity.json") or {}
+        book = len(activity.get("accounts") or {})
+    if not book:
+        report.warn("workbook:licenceCoverage",
+                    "no enrichment output, so licensing has no denominator - every "
+                    "licence cell will be blank rather than zero, and that is correct")
+        return
+    share = live / float(book)
+    detail = "%d/%d accounts carry a live licence reading (%.0f%%)" % (live, book, share * 100)
+    if share < 0.25:
+        report.warn("workbook:licenceCoverage",
+                    detail + " - thin. Say so rather than letting the blanks read as zeros.")
+    else:
+        report.ok("workbook:licenceCoverage", detail)
+
+
+def check_enrichment_coverage(run_dir, report):
+    """Say what fraction of the book was enriched, rather than leaving it implied."""
+    activity = read_json(run_dir, "salesforce-activity.json") or {}
+    rows = activity.get("accounts") or {}
+    report_json = read_json(run_dir, "fy27-territory-plan.json") or {}
+    book = len(report_json.get("accounts") or []) or len(rows)
+    if not rows:
+        report.warn("enrichment:coverage",
+                    "no Salesforce activity in this run - every account stays Unknown, "
+                    "which is not the same as cold. Do not present them as cold.")
+        return
+    enriched = sum(1 for v in rows.values() if v.get("status") == "enriched")
+    detail = "%d/%d accounts enriched (%.0f%%)" % (enriched, book,
+                                                   (enriched / float(book) * 100) if book else 0)
+    if book and enriched / float(book) < 0.25:
+        report.warn("enrichment:coverage", detail + " - thin; state this on the slide.")
+    else:
+        report.ok("enrichment:coverage", detail)
+
+
+def check_reclassification(run_dir, report):
+    """A shifted play mix needs a named cause, or it reads as the tool drifting."""
+    data = read_json(run_dir, "reclassification.json")
+    if data is None:
+        return
+    licence_driven = data.get("licenceDriven") or 0
+    if licence_driven:
+        report.warn("plays:reclassified",
+                    "%d account(s) moved play because live licensing showed a Team plan. "
+                    "This is a correction, not drift - see reclassification.json and say "
+                    "so when the play counts differ from last run." % licence_driven)
+    else:
+        report.ok("plays:reclassified", "no licence-driven play changes this run")
+
+
 def main():
     args = sys.argv[1:]
     as_json = "--json" in args
@@ -222,6 +341,10 @@ def main():
     report = Report()
     check_artefacts(run_dir, report)
     check_sprint_layout(run_dir, report)
+    check_execution_slides(run_dir, report)
+    check_licence_columns(run_dir, report)
+    check_enrichment_coverage(run_dir, report)
+    check_reclassification(run_dir, report)
     check_coverage(run_dir, report)
     check_overrides(run_dir, report)
     check_triggers(run_dir, report)

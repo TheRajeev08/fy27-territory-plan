@@ -547,10 +547,78 @@ def _xml_escape(value):
             .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;"))
 
 
-def _account_row(a, compact=False):
+LICENCE_HEADERS = ["GHE Seats", "Copilot Seats", "Copilot Attach %", "Active Committers",
+                   "GHAS Committers", "Plan"]
+
+# Every account sheet, from one definition. The play sheets used to carry no licence
+# column at all, so the widest sheets in the workbook were sized on the SuperDash upload
+# - exactly the org-wide signal live licensing exists to correct.
+#
+# Licence columns sit immediately after the engagement columns on purpose: one row now
+# answers "are we talking to them" and "what do they actually own" side by side.
+ACCOUNT_HEADERS = [
+    "Account", "Salesforce ID", "Primary Play", "All Plays", "Capacity", "Renewal",
+    "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way",
+    "Last Activity", "Meetings",
+] + LICENCE_HEADERS + [
+    "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria",
+    "How to Win", "Evidence", "Key Contacts", "Verify In",
+]
+
+# The per-play sheets drop the Salesforce ID (internal) and How to Win (on the sheet
+# header already). Derived rather than retyped, so adding a column cannot silently put
+# one sheet's headers over another sheet's data.
+COMPACT_DROP = ("Salesforce ID", "How to Win")
+COMPACT_INDEX = [i for i, h in enumerate(ACCOUNT_HEADERS) if h not in COMPACT_DROP]
+COMPACT_HEADERS = [ACCOUNT_HEADERS[i] for i in COMPACT_INDEX]
+
+_WIDTH = {
+    "Account": 28, "Salesforce ID": 20, "Primary Play": 14, "All Plays": 18,
+    "Capacity": 13, "Renewal": 13, "Renewal Horizon": 17, "Potential Proxy": 14,
+    "Priority Score": 14, "Engagement Tier": 15, "Two-way": 11, "Last Activity": 14,
+    "Meetings": 10, "GHE Seats": 11, "Copilot Seats": 14, "Copilot Attach %": 16,
+    "Active Committers": 17, "GHAS Committers": 16, "Plan": 12, "Readiness": 12,
+    "Action Owner": 17, "Target Persona": 24, "Next Action": 42, "Exit Criteria": 32,
+    "How to Win": 50, "Evidence": 46, "Key Contacts": 34, "Verify In": 16,
+}
+
+
+def _widths(headers):
+    return [_WIDTH.get(h, 18) for h in headers]
+
+
+def _licence_cells(entry):
+    """The five licence facts plus the plan, for one account.
+
+    Returns blanks - never zeros - where there is no reading. A zero here claims the
+    account has no seats, which is a different and much worse thing to tell a seller
+    than "we did not manage to look this one up". They would deprioritise a live
+    account on the strength of it.
+
+    Definitions match `ghcp.seat_facts`, so the play sheets and the Sprint Focus sheet
+    cannot disagree about the same account.
+    """
+    if not entry:
+        return ["", "", "", "", "", ""]
+    enterprise = int(num(entry.get("enterpriseSeatsConsumed")) or 0)
+    team = int(num(entry.get("teamSeatsConsumed")) or 0)
+    ghe = enterprise + team
+    copilot = int(num(entry.get("copilotSeats")) or 0)
+    return [
+        ghe,
+        copilot,
+        f"{copilot / ghe:.0%}" if ghe else "",
+        int(num(entry.get("maxCommitters")) or 0),
+        int(num(entry.get("ghasMeteredCommitters")) or 0),
+        (entry.get("planType") or "").title(),
+    ]
+
+
+def _account_row(a, compact=False, licensing=None):
     activity = a.get("activity") or {}
     contacts = "; ".join(f'{c.get("name", "")} ({c.get("title", "")})' for c in a.get("contacts") or [])
     verify = (a.get("dashboards") or [{}])[0].get("url", "")
+    entry = (licensing or {}).get(a.get("salesforceId") or "")
     base = [
         a.get("name", ""), a.get("salesforceId", ""), a.get("primaryPlay", ""),
         "; ".join(a.get("plays") or []), a.get("capacityTier", ""),
@@ -559,13 +627,14 @@ def _account_row(a, compact=False):
         "" if a.get("priorityScore") is None else a.get("priorityScore"),
         activity.get("tier", ""), "Yes" if activity.get("twoWay") else ("No" if activity.get("status") == "enriched" else "Unknown"),
         activity.get("lastActivity", ""), activity.get("meetings", 0),
+    ] + _licence_cells(entry) + [
         a.get("executionReadiness", ""), a.get("nextAction", {}).get("owner", ""),
         a.get("nextAction", {}).get("persona", ""), a.get("nextAction", {}).get("action", ""),
         a.get("nextAction", {}).get("exitCriteria", ""), a.get("winPlan", ""),
         "; ".join(a.get("evidence") or []), contacts, verify,
     ]
     if compact:
-        return [base[i] for i in (0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21)]
+        return [base[i] for i in COMPACT_INDEX]
     return base
 
 
@@ -867,8 +936,14 @@ def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None, lic
     stats = report.get("stats") or {}
     activity = report.get("activity") or {}
 
-    account_headers = ["Account", "Primary Play", "All Plays", "Capacity", "Renewal", "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way", "Last Activity", "Meetings", "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria", "How to Win", "Evidence", "Key Contacts", "Verify In"]
-    compact_headers = ["Account", "Primary Play", "All Plays", "Capacity", "Renewal", "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way", "Last Activity", "Meetings", "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria", "Evidence", "Key Contacts", "Verify In"]
+    account_headers = ACCOUNT_HEADERS
+    compact_headers = COMPACT_HEADERS
+    # Found by name. These used to be hardcoded indices, and the header list had drifted
+    # one column away from the row builder, so the fallback workbook put every All
+    # Accounts heading over the wrong data and hyperlinked the contacts column.
+    all_link_col = account_headers.index("Verify In")
+    compact_link_col = compact_headers.index("Verify In")
+    lic_accounts = (licensing or {}).get("accounts") or {}
     sheet_defs = {}
 
     summary_rows = [
@@ -909,13 +984,13 @@ def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None, lic
 
     all_rows = [[_cell(h, 4) for h in account_headers]]
     for a in accounts:
-        row = _account_row(a)
+        row = _account_row(a, licensing=lic_accounts)
         out = []
         for i, value in enumerate(row):
-            link = value if i == 20 and value else None
+            link = value if i == all_link_col and value else None
             out.append(_cell("Open dashboard" if link else value, 14 if link else (12 if len(all_rows) % 2 == 0 else 11), link))
         all_rows.append(out)
-    sheet_defs["All Accounts"] = (all_rows, [28, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 42, 32, 50, 46, 34, 16], 1, 1, [], "1D4ED8")
+    sheet_defs["All Accounts"] = (all_rows, _widths(account_headers), 1, 1, [], "1D4ED8")
 
     for play in ("Innovate", "Trust", "Scale", "Unclassified"):
         guidance = PLAY_GUIDANCE[play]
@@ -931,9 +1006,11 @@ def write_xlsx_minimal(path, report, sprint=None, focus=None, contacts=None, lic
             [_cell(h, 4) for h in compact_headers],
         ]
         for a in matching:
-            vals = _account_row(a, compact=True)
-            rows.append([_cell("Open dashboard" if i == 19 and value else value, 14 if i == 19 and value else (12 if len(rows) % 2 == 0 else 11), value if i == 19 and value else None) for i, value in enumerate(vals)])
-        sheet_defs[play] = (rows, [28, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 42, 32, 46, 34, 16], 8, 8, ["A1:T1", "A2:T2"], {"Innovate": "1D4ED8", "Trust": "0F766E", "Scale": "7C3AED", "Unclassified": "475569"}[play])
+            vals = _account_row(a, compact=True, licensing=lic_accounts)
+            rows.append([_cell("Open dashboard" if i == compact_link_col and value else value, 14 if i == compact_link_col and value else (12 if len(rows) % 2 == 0 else 11), value if i == compact_link_col and value else None) for i, value in enumerate(vals)])
+        _span = _column_name(len(compact_headers) - 1)
+        sheet_defs[play] = (rows, _widths(compact_headers), 8, 8,
+                            ["A1:%s1" % _span, "A2:%s2" % _span], {"Innovate": "1D4ED8", "Trust": "0F766E", "Scale": "7C3AED", "Unclassified": "475569"}[play])
 
     headers_s, data_s, widths_s = _sprint_headers, _sprint_spec_rows, _sprint_widths
     link_col = headers_s.index("Verify In") if "Verify In" in headers_s else -1
@@ -1050,20 +1127,12 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
     def safe(v):
         return "" if v is None else v
 
+    # One row builder for both writers. Two hand-maintained copies is how the fallback
+    # writer ended up a column out of step with its own headers.
+    lic_accounts = (licensing or {}).get("accounts") or {}
+
     def account_values(a):
-        act = a.get("activity") or {}
-        contacts = "; ".join(f'{c.get("name", "")} ({c.get("title", "")})' for c in a.get("contacts") or [])
-        verify = (a.get("dashboards") or [{}])[0].get("url", "")
-        return [
-            a.get("name", ""), a.get("salesforceId", ""), a.get("primaryPlay", ""),
-            "; ".join(a.get("plays") or []), a.get("capacityTier", ""), a.get("renewal", ""),
-            a.get("renewalHorizon", ""), a.get("revenuePotential", ""), a.get("priorityScore", ""),
-            act.get("tier", ""), "Yes" if act.get("twoWay") else ("No" if act.get("status") == "enriched" else "Unknown"),
-            act.get("lastActivity", ""), act.get("meetings", 0), a.get("executionReadiness", ""),
-            a.get("nextAction", {}).get("owner", ""), a.get("nextAction", {}).get("persona", ""),
-            a.get("nextAction", {}).get("action", ""), a.get("nextAction", {}).get("exitCriteria", ""),
-            a.get("winPlan", ""), "; ".join(a.get("evidence") or []), contacts, verify,
-        ]
+        return _account_row(a, licensing=lic_accounts)
 
     def setup(ws, tab_color, widths):
         ws.set_tab_color(tab_color)
@@ -1167,39 +1236,45 @@ def write_xlsx(path, report, sprint=None, focus=None, contacts=None, licensing=N
     ws.set_row(39 + off, 24)
     ws.set_row(40 + off, 32)
 
-    account_headers = ["Account", "Salesforce ID", "Primary Play", "All Plays", "Capacity", "Renewal", "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way", "Last Activity", "Meetings", "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria", "How to Win", "Evidence", "Key Contacts", "Verify In"]
+    account_headers = ACCOUNT_HEADERS
     all_rows = []
     for a in accounts:
         vals = account_values(a)
         all_rows.append(vals)
     ws = wb.add_worksheet("All Accounts")
-    write_table(ws, 0, account_headers, all_rows, [27, 20, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 40, 32, 50, 42, 34, 16], blue, "AllAccounts")
-    ws.set_column(16, 19, 42, body_fmt)
-    ws.set_column(20, 21, 28, link_fmt)
-    ws.conditional_format(1, 8, len(all_rows), 8, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
+    write_table(ws, 0, account_headers, all_rows, _widths(account_headers), blue, "AllAccounts")
+    _ah = account_headers
+    ws.set_column(_ah.index("Next Action"), _ah.index("Evidence"), 42, body_fmt)
+    ws.set_column(_ah.index("Key Contacts"), _ah.index("Verify In"), 28, link_fmt)
+    _score = _ah.index("Priority Score")
+    ws.conditional_format(1, _score, len(all_rows), _score, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
 
     for play in ("Innovate", "Trust", "Scale", "Unclassified"):
         ws = wb.add_worksheet(play)
-        setup(ws, {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play], [27, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 40, 32, 42, 34, 16])
+        _last = len(COMPACT_HEADERS) - 1
+        _span = _column_name(_last)
+        setup(ws, {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play], _widths(COMPACT_HEADERS))
         ws.set_row(0, 28)
-        ws.merge_range("A1:T1", play.upper(), wb.add_format({"bold": True, "font_size": 18, "font_color": white, "bg_color": {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play]}))
+        ws.merge_range("A1:%s1" % _span, play.upper(), wb.add_format({"bold": True, "font_size": 18, "font_color": white, "bg_color": {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play]}))
         g = guidance[play]
-        ws.merge_range("A2:T2", g["objective"], subtitle_fmt)
+        ws.merge_range("A2:%s2" % _span, g["objective"], subtitle_fmt)
         for r, (label, value) in enumerate((("Account fit", g["fit"]), ("Recommended motion", g["motion"]), ("Seller actions", g["actions"]), ("Exit criteria", g["exit"])), 3):
             ws.write(r, 0, label, label_fmt)
-            ws.merge_range(r, 1, r, 19, value, note_fmt)
+            ws.merge_range(r, 1, r, _last, value, note_fmt)
             ws.set_row(r, 34)
         matching = [a for a in accounts if a.get("primaryPlay") == play]
-        compact_headers = ["Account", "Primary Play", "All Plays", "Capacity", "Renewal", "Renewal Horizon", "Potential Proxy", "Priority Score", "Engagement Tier", "Two-way", "Last Activity", "Meetings", "Readiness", "Action Owner", "Target Persona", "Next Action", "Exit Criteria", "Evidence", "Key Contacts", "Verify In"]
+        compact_headers = COMPACT_HEADERS
         compact_rows = []
         for a in matching:
             vals = account_values(a)
-            compact_rows.append([vals[i] for i in (0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21)])
-        write_table(ws, 8, compact_headers, compact_rows, [27, 14, 18, 13, 13, 17, 14, 14, 15, 11, 14, 10, 12, 17, 24, 40, 32, 42, 34, 16], {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play], f"{play.replace(' ', '')}Accounts")
-        ws.set_column(15, 18, 42, body_fmt)
-        ws.set_column(19, 19, 28, link_fmt)
+            compact_rows.append([vals[i] for i in COMPACT_INDEX])
+        write_table(ws, 8, compact_headers, compact_rows, _widths(compact_headers), {"Innovate": blue, "Trust": teal, "Scale": purple, "Unclassified": slate}[play], f"{play.replace(' ', '')}Accounts")
+        ws.set_column(compact_headers.index("Next Action"), compact_headers.index("Key Contacts"), 42, body_fmt)
+        _vi = compact_headers.index("Verify In")
+        ws.set_column(_vi, _vi, 28, link_fmt)
         if compact_rows:
-            ws.conditional_format(9, 7, 8 + len(compact_rows), 7, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
+            _cs = compact_headers.index("Priority Score")
+            ws.conditional_format(9, _cs, 8 + len(compact_rows), _cs, {"type": "3_color_scale", "min_color": "#FEE2E2", "mid_color": "#FEF3C7", "max_color": "#DCFCE7"})
 
     ws = wb.add_worksheet("Sprint Focus")
     sprint_headers, sprint_rows, sprint_widths, sprint_source = sprint_sheet_spec(
