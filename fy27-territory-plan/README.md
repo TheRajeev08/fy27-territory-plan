@@ -6,7 +6,7 @@ Gong access, with a meeting-booking shortlist and an Excel workbook.
 
 Ask Copilot:
 
-> Build my FY27 territory plan from ~/Downloads/Super Summary.xlsx
+> Build my FY27 H1 territory plan and leadership deck from ~/Downloads/Super Summary.xlsx
 
 ## Why a plugin instead of the web app
 
@@ -30,7 +30,11 @@ safe to re-run — an existing copy is updated, and a damaged one is repaired.
 
 Then **quit the Copilot app completely and reopen it** (closing the window is not enough), and ask:
 
-> Build my FY27 territory plan
+> Build my FY27 H1 territory plan and leadership deck
+
+That one sentence builds the plan, the sprint queue and both decks in the order they depend on
+each other. Asking for the plan and the deck as two separate requests is the one reliable way to
+end up with an incomplete Sprint Focus tab and no error to tell you.
 
 Optionally install the canvas so results render in-app — ask Copilot:
 
