@@ -6,7 +6,7 @@ Gong access, with a meeting-booking shortlist and an Excel workbook.
 
 Ask Copilot:
 
-> Build my FY27 territory plan from ~/Downloads/Super Summary.xlsx
+> Build my FY27 H1 territory plan and leadership deck from ~/Downloads/Super Summary.xlsx
 
 ## Why a plugin instead of the web app
 
@@ -30,7 +30,11 @@ safe to re-run — an existing copy is updated, and a damaged one is repaired.
 
 Then **quit the Copilot app completely and reopen it** (closing the window is not enough), and ask:
 
-> Build my FY27 territory plan
+> Build my FY27 H1 territory plan and leadership deck
+
+That one sentence builds the plan, the sprint queue and both decks in the order they depend on
+each other. Asking for the plan and the deck separately is the one reliable way to end up with an
+incomplete Sprint Focus tab and no error to tell you.
 
 Optionally install the canvas so results render in-app — ask Copilot:
 
@@ -79,13 +83,19 @@ locally. Engagement simply stays **Unknown**, which is reported honestly rather 
    open pipeline, and Gong calls for the shortlist, with coverage and an as-of date.
 4. **Sprint Focus** — a ranked shortlist of who to book this sprint and why.
 5. **Excel workbook** — eight sheets, executive dashboard first.
-6. **H1 focus presentation** — ask for it separately, once the plan has run:
+6. **Licence and consumption data** — GHE seats, Copilot seats, attach rate, active committers,
+   GHAS coverage and plan type on every account, read live from GitHub's own licensing rather than
+   inferred from the upload. Where a lookup did not resolve, the cell is **blank, never zero** — a
+   zero would assert the account has no seats, which is a far stronger claim than "we did not
+   manage to check".
+7. **H1 leadership presentation** — built by the same single instruction, not a separate ask.
 
-   > Build my H1 focus accounts deck
-
-   A 13-slide leadership deck plus a 21-slide evidence pack naming 30–50 focus accounts for the half, sized in AIU, Copilot seats and
-   GHE + GHAS, with the execution plan grounded in GitHub's Product Adoption Framework, Microsoft
-   and partner leverage, an honest working / not-working read, and the asks of leadership. It ships
+   A 16-slide leadership deck plus an evidence pack naming 30–50 focus accounts for the half, sized
+   in AIU, Copilot seats and GHE + GHAS. Each play gets a **pair** of slides: the accounts, then an
+   execution slide splitting the play into landing the product where it is absent and expanding it
+   where it is already in, with the step sequence for each motion taken from GitHub's Product
+   Adoption Framework. Plus Microsoft and partner leverage, an honest working / not-working read,
+   and the asks of leadership. It ships
    with a companion evidence workbook whose `Sizing Detail` sheet gives one row per sized line with
    its rate and basis, so any figure on a slide can be traced in a single lookup.
 
